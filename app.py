@@ -389,7 +389,7 @@ st.markdown(
     "Upload the full Gemini transcript PDF and the Gemini summary PDF. "
 )
 
-full_pdf = st.file_uploader("Full transcript (PDF)", type=["pdf"])
+full_pdf = st.file_uploader("Full Gemini transcript (PDF)", type=["pdf"])
 summary_pdf = st.file_uploader("Gemini summary (PDF)", type=["pdf"])
 
 additional_instructions = st.text_area(
