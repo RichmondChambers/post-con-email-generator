@@ -401,7 +401,7 @@ do_faiss_check = st.checkbox(
     "Run legal accuracy check against internal knowledge (optional)"
 )
 
-generate = st.button("Generate Post-Con Email Summary")
+generate = st.button("Generate Post-Con Email")
 
 
 if generate:
