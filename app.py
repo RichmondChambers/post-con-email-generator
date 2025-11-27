@@ -265,7 +265,7 @@ Transcript chunk:
 \"\"\"{chunk_text}\"\"\"
 """
 
-def build_final_prompt(all_chunk_notes, gemini_summary, additional_instructions=""):
+def build_final_prompt(all_chunk_notes, gemini_summary, additional_instructions="", client_name="[Prospect]"):
     return f"""
 You are an experienced UK immigration barrister drafting a post-consultation follow-up email to a client.
 
@@ -418,17 +418,18 @@ if generate:
     summary_text = extract_pdf_text(summary_pdf)
 
     transcript = clean_transcript(full_text)
-    
-        # 1b) Try to extract client name from transcript or summary
-    extracted_name = extract_prospect_name(transcript)  # fallback is "[Prospect]"
+
+    # Auto-extract client/prospect name (no UI)
+    extracted_name = extract_prospect_name(transcript)
     if extracted_name == "[Prospect]":
         extracted_name = extract_prospect_name(summary_text)
 
-    # Allow manual override in UI (persist across reruns)
-    client_name = st.text_input(
-        "Client name (for salutation)",
-        value=extracted_name if extracted_name else "[Client]"
-    ).strip() or "[Client]"
+    client_name = extracted_name or "[Prospect]"
+    
+    # 1b) Try to extract client name from transcript or summary
+    extracted_name = extract_prospect_name(transcript)  # fallback is "[Prospect]"
+    if extracted_name == "[Prospect]":
+        extracted_name = extract_prospect_name(summary_text)
 
     # 2) Stage A: chunk notes from full transcript
     with st.spinner("Reviewing transcript and drafting post-con email..."):
