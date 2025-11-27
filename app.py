@@ -190,6 +190,45 @@ def extract_pdf_text(uploaded_file):
         )
     return text
 
+def extract_name_from_filename(filename: str) -> str:
+    """
+    Try to infer a client first name (or full name) from the transcript PDF filename.
+    Returns "[Client]" if nothing reliable is found.
+
+    Examples it handles:
+    - "John Smith - Gemini Transcript.pdf" -> "John Smith"
+    - "2025-11-20 Maria_Garcia transcript.pdf" -> "Maria Garcia"
+    - "Transcript - Ahmed.pdf" -> "Ahmed"
+    """
+    if not filename:
+        return "[Client]"
+
+    # strip extension
+    base = re.sub(r"\.[^.]+$", "", filename)
+
+    # replace separators with spaces
+    base = re.sub(r"[_\-]+", " ", base)
+
+    # remove common noise words
+    noise = [
+        "gemini", "transcript", "summary", "consultation",
+        "call", "meeting", "recording", "notes",
+        "full", "final", "post con", "post-con",
+        "richmond", "chambers"
+    ]
+    pattern = r"\b(" + "|".join(map(re.escape, noise)) + r")\b"
+    cleaned = re.sub(pattern, " ", base, flags=re.IGNORECASE)
+
+    # collapse whitespace
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+
+    # Look for 1–3 capitalised words in a row (likely a name)
+    m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b", cleaned)
+    if m:
+        return m.group(1).strip()
+
+    return "[Client]"
+
 # --- Helper: Extract Prospect Name ---
 def extract_prospect_name(enquiry):
     closings = ["regards,", "best,", "sincerely,", "thanks,", "kind regards,"]
@@ -265,7 +304,7 @@ Transcript chunk:
 \"\"\"{chunk_text}\"\"\"
 """
 
-def build_final_prompt(all_chunk_notes, gemini_summary, additional_instructions="", client_name="[Prospect]"):
+def build_final_prompt(all_chunk_notes, gemini_summary, additional_instructions="", client_name="[Client]"):
     return f"""
 You are an experienced UK immigration barrister drafting a post-consultation follow-up email to a client.
 
@@ -419,17 +458,20 @@ if generate:
 
     transcript = clean_transcript(full_text)
 
-    # Auto-extract client/prospect name (no UI)
-    extracted_name = extract_prospect_name(transcript)
-    if extracted_name == "[Client]":
-        extracted_name = extract_prospect_name(summary_text)
+    # 0) Try filename first
+    client_name = extract_name_from_filename(full_pdf.name)
 
-    client_name = extracted_name or "[Client]"
-    
-    # 1b) Try to extract client name from transcript or summary
-    extracted_name = extract_prospect_name(transcript)  # fallback is "[Prospect]"
-    if extracted_name == "[Client]":
-        extracted_name = extract_prospect_name(summary_text)
+    # 1) If filename didn't yield anything, try transcript
+    if client_name == "[Client]":
+        client_name = extract_prospect_name(transcript)
+
+    # 2) If still not found, try summary
+    if client_name == "[Client]":
+        client_name = extract_prospect_name(summary_text)
+
+    # Final fallback safety
+    if not client_name:
+        client_name = "[Client]"
 
     # 2) Stage A: chunk notes from full transcript
     with st.spinner("Reviewing transcript and drafting post-con email..."):
