@@ -200,7 +200,7 @@ def extract_prospect_name(enquiry):
     match = re.search(r"my name is\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE)
     if match:
         return match.group(1)
-    return "[Prospect]"
+    return "[Client]"
 
 # --- Helper: Embed Query ---
 def get_embedding(text, model="text-embedding-3-small"):
@@ -421,14 +421,14 @@ if generate:
 
     # Auto-extract client/prospect name (no UI)
     extracted_name = extract_prospect_name(transcript)
-    if extracted_name == "[Prospect]":
+    if extracted_name == "[Client]":
         extracted_name = extract_prospect_name(summary_text)
 
-    client_name = extracted_name or "[Prospect]"
+    client_name = extracted_name or "[Client]"
     
     # 1b) Try to extract client name from transcript or summary
     extracted_name = extract_prospect_name(transcript)  # fallback is "[Prospect]"
-    if extracted_name == "[Prospect]":
+    if extracted_name == "[Client]":
         extracted_name = extract_prospect_name(summary_text)
 
     # 2) Stage A: chunk notes from full transcript
