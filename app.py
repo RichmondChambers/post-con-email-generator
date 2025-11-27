@@ -269,6 +269,10 @@ def build_final_prompt(all_chunk_notes, gemini_summary, additional_instructions=
     return f"""
 You are an experienced UK immigration barrister drafting a post-consultation follow-up email to a client.
 
+IMPORTANT OPENING RULE:
+- The email MUST begin with exactly: "Dear {client_name},"
+- Put a blank line after the salutation.
+
 You have:
 1) Full transcript notes (controlling factual basis)
 2) Gemini summary (supportive only)
@@ -414,6 +418,17 @@ if generate:
     summary_text = extract_pdf_text(summary_pdf)
 
     transcript = clean_transcript(full_text)
+    
+        # 1b) Try to extract client name from transcript or summary
+    extracted_name = extract_prospect_name(transcript)  # fallback is "[Prospect]"
+    if extracted_name == "[Prospect]":
+        extracted_name = extract_prospect_name(summary_text)
+
+    # Allow manual override in UI (persist across reruns)
+    client_name = st.text_input(
+        "Client name (for salutation)",
+        value=extracted_name if extracted_name else "[Client]"
+    ).strip() or "[Client]"
 
     # 2) Stage A: chunk notes from full transcript
     with st.spinner("Reviewing transcript and drafting post-con email..."):
@@ -427,9 +442,14 @@ if generate:
         final_prompt = build_final_prompt(
             combined_notes,
             summary_text,
-            additional_instructions
+            additional_instructions,
+            client_name=client_name
         )
         final_summary = call_llm(final_prompt, temperature=0.2)
+
+        # Safety net: prepend salutation if model didn't
+        if not final_summary.lstrip().lower().startswith("dear "):
+            final_summary = f"Dear {client_name},\n\n{final_summary.lstrip()}"
 
     st.success("Post-con email generated.")
     st.text_area("Email-ready summary", value=final_summary, height=650)
