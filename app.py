@@ -387,7 +387,6 @@ st.markdown(
 
 st.markdown(
     "Upload the full Gemini transcript PDF and the Gemini summary PDF. "
-    "The app will generate a detailed, email-ready post-consultation summary."
 )
 
 full_pdf = st.file_uploader("Full transcript (PDF)", type=["pdf"])
@@ -417,7 +416,7 @@ if generate:
     transcript = clean_transcript(full_text)
 
     # 2) Stage A: chunk notes from full transcript
-    with st.spinner("Summarising transcript..."):
+    with st.spinner("Reviewing transcript and drafting post-con email..."):
         chunk_notes = []
         for chunk in chunk_text(transcript):
             chunk_notes.append(call_llm(build_chunk_prompt(chunk), temperature=0.1))
@@ -432,7 +431,7 @@ if generate:
         )
         final_summary = call_llm(final_prompt, temperature=0.2)
 
-    st.success("Post-con email summary generated.")
+    st.success("Post-con email generated.")
     st.text_area("Email-ready summary", value=final_summary, height=650)
 
     # 4) OPTIONAL: FAISS legal accuracy check
@@ -473,7 +472,7 @@ if generate:
             )
             verification_report = call_llm(verification_prompt, temperature=0.0)
 
-        with st.expander("Legal accuracy check (internal use)", expanded=False):
+        with st.expander("Legal accuracy check (internal use only)", expanded=False):
             st.markdown(verification_report)
 
     # --- ALWAYS show responsibility statement ---
