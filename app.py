@@ -98,10 +98,6 @@ user_email = google_login()
 # st.write(f"Signed in as: {user_email}")
 
 # --- Load FAISS Index and Metadata ---
-@st.cache_resource
-def load_index_and_metadata():
-    ...
-
 
 def format_for_email(response_text):
     """
@@ -124,9 +120,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-# --- Load API Key securely ---
-openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # --- Load FAISS Index and Metadata ---
 @st.cache_resource
@@ -487,66 +480,68 @@ if generate:
         with st.expander("Legal accuracy check (internal use)", expanded=False):
             st.markdown(verification_report)
 
-        st.markdown(
-    """
-    ---  
-    **Professional Responsibility Statement**
+    # --- ALWAYS show responsibility statement ---
+    st.markdown(
+        """
+        ---  
+        **Professional Responsibility Statement**
 
-    AI-generated content must not be relied upon without human review. Where such
-    content is used, the barrister is responsible for verifying and ensuring the accuracy
-    and legal soundness of that content. AI tools are used solely to support drafting and
-    research; they do not replace the barrister’s independent judgment, analysis, or duty
-    of care.
-    """,
-    unsafe_allow_html=False,
-)
+        AI-generated content must not be relied upon without human review. Where such
+        content is used, the barrister is responsible for verifying and ensuring the accuracy
+        and legal soundness of that content. AI tools are used solely to support drafting and
+        research; they do not replace the barrister’s independent judgment, analysis, or duty
+        of care.
+        """,
+        unsafe_allow_html=False,
+    )
 
-        # ✅ Convert Markdown reply to HTML for the copy button
-        md = MarkdownIt()
-        html_reply = md.render(reply)
+    # --- Copy to clipboard button (uses final_summary) ---
+    md = MarkdownIt()
+    html_reply = md.render(final_summary)
 
-        components.html(
-            f"""
-            <style>
-            .copy-button {{
-                margin-top: 10px;
-                padding: 8px 16px;
-                background-color: #2e2e2e;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                transition: background-color 0.2s ease, transform 0.1s ease;
-            }}
-            .copy-button:hover {{
-                background-color: #4a4a4a;
-            }}
-            .copy-button:active {{
-                background-color: #3a3a3a;
-                transform: scale(0.98);
-            }}
-            </style>
+    components.html(
+        f"""
+        <style>
+        .copy-button {{
+            margin-top: 10px;
+            padding: 8px 16px;
+            background-color: #2e2e2e;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+        }}
+        .copy-button:hover {{
+            background-color: #4a4a4a;
+        }}
+        .copy-button:active {{
+            background-color: #3a3a3a;
+            transform: scale(0.98);
+        }}
+        </style>
 
-            <button class="copy-button" onclick="copyToClipboard()">📋 Copy to Clipboard</button>
+        <button class="copy-button" onclick="copyToClipboard()">📋 Copy to Clipboard</button>
 
-            <script>
-            async function copyToClipboard() {{
-                const htmlContent = `{html_reply.replace("`", "\\`")}`;
-                const plainText = `{reply.replace("`", "\\`")}`;
+        <script>
+        async function copyToClipboard() {{
+            const htmlContent = `{html_reply.replace("`", "\\`")}`;
+            const plainText = `{final_summary.replace("`", "\\`")}`;
 
-                const blobHtml = new Blob([htmlContent], {{ type: 'text/html' }});
-                const blobText = new Blob([plainText], {{ type: 'text/plain' }});
+            const blobHtml = new Blob([htmlContent], {{ type: 'text/html' }});
+            const blobText = new Blob([plainText], {{ type: 'text/plain' }});
 
-                const clipboardItem = new ClipboardItem({{
-                    'text/html': blobHtml,
-                    'text/plain': blobText
-                }});
+            const clipboardItem = new ClipboardItem({{
+                'text/html': blobHtml,
+                'text/plain': blobText
+            }});
 
-                await navigator.clipboard.write([clipboardItem]);
-                alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
-            }}
-            </script>
-            """,
-            height=120,
-            scrolling=False
-        )
+            await navigator.clipboard.write([clipboardItem]);
+                        alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
+        }}
+        </script>
+        """,
+        height=120,
+        scrolling=False
+    )
+
