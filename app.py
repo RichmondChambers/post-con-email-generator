@@ -108,10 +108,6 @@ def format_for_email(response_text):
     formatted = formatted.replace("\n\n", "\n")  # remove extra spacing
     return formatted.strip()
 
-from PIL import Image
-
-logo = Image.open("assets/logo.png")
-
 st.markdown(
     """
     <div style="text-align: center; padding-bottom: 10px;">
