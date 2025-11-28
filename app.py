@@ -340,15 +340,15 @@ B. Client Objectives / Questions Raised
 - bullet points.
 
 C. Routes / Options Discussed (route-by-route notes)
-For each route/option mentioned in this chunk, include:
-Route/Option:
-Why relevant to client:
-Key requirements mentioned:
-Application to facts:
-Evidence position:
-Risks / suitability / discretion:
-Strategic choices:
-Preliminary conclusion stated:
+- For each route/option mentioned in this chunk, include:
+- Route/Option:
+- Why relevant to client:
+- Key requirements mentioned:
+- Application to facts:
+- Evidence position:
+- Risks / suitability / discretion:
+- Strategic choices:
+- Preliminary conclusion stated:
 
 D. Actions / Next Steps Mentioned
 - bullet points marked Confirmed or Suggested.
