@@ -342,14 +342,15 @@ Rules:
 - Use second person ("you", "your").
 - Your Instructions must be bullet points. Other sections prose.
 - Where a route was discussed in any detail, devote at least one substantial paragraph.
+- Do not use horizontal rules or markdown separators (no "---").
 
 OUTPUT STRUCTURE:
 
 1. Opening Pleasantry (no heading)
-+ - 2–3 sentences.
-+ - Sentence 1: thanks / reference date.
-+ - Sentence 2: empathy / reassurance.
-+ - Sentence 3: lead-in explaining that the email summarises instructions, advice, fees and next steps.
+- 2–3 sentences.
+- Sentence 1: thanks / reference date.
+- Sentence 2: empathy / reassurance.
+- Sentence 3: lead-in explaining that the email summarises instructions, advice, fees and next steps.
 
 2. **Your Instructions**
 - detailed bullets of facts
