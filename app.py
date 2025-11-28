@@ -10,8 +10,6 @@ import jwt  # from PyJWT
 import streamlit.components.v1 as components
 from markdown_it import MarkdownIt
 from index_builder import sync_drive_and_rebuild_index_if_needed, INDEX_FILE, METADATA_FILE
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 
 def google_login():
     """
@@ -90,7 +88,6 @@ def google_login():
     # Stop the app here until the user has logged in
     st.stop()
 
-
 # --- Load API Key securely ---
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
@@ -100,6 +97,7 @@ user_email = google_login()
 # Optionally show who is logged in (for debugging)
 # st.write(f"Signed in as: {user_email}")
 
+# --- Load FAISS Index and Metadata ---
 
 def format_for_email(response_text):
     """
@@ -109,7 +107,6 @@ def format_for_email(response_text):
     formatted = response_text.replace("**", "")  # remove bold markup
     formatted = formatted.replace("\n\n", "\n")  # remove extra spacing
     return formatted.strip()
-
 
 st.markdown(
     """
@@ -142,7 +139,6 @@ def load_index_and_metadata():
         last_rebuilt = "Unknown"
 
     return index, metadata, last_rebuilt
-
 
 index, metadata, last_rebuilt = load_index_and_metadata()
 
@@ -184,6 +180,7 @@ def extract_text_from_uploaded_file(uploaded_file):
         return ""
 
 
+# ✅ WRAPPER GOES HERE
 def extract_pdf_text(uploaded_file):
     text = extract_text_from_uploaded_file(uploaded_file)
     if not text or len(text.strip()) < 50:
@@ -193,18 +190,26 @@ def extract_pdf_text(uploaded_file):
         )
     return text
 
-
 def extract_name_from_filename(filename: str) -> str:
     """
     Try to infer a client first name (or full name) from the transcript PDF filename.
     Returns "[Client]" if nothing reliable is found.
+
+    Examples it handles:
+    - "John Smith - Gemini Transcript.pdf" -> "John Smith"
+    - "2025-11-20 Maria_Garcia transcript.pdf" -> "Maria Garcia"
+    - "Transcript - Ahmed.pdf" -> "Ahmed"
     """
     if not filename:
         return "[Client]"
 
+    # strip extension
     base = re.sub(r"\.[^.]+$", "", filename)
+
+    # replace separators with spaces
     base = re.sub(r"[_\-]+", " ", base)
 
+    # remove common noise words
     noise = [
         "gemini", "transcript", "summary", "consultation",
         "call", "meeting", "recording", "notes",
@@ -213,8 +218,11 @@ def extract_name_from_filename(filename: str) -> str:
     ]
     pattern = r"\b(" + "|".join(map(re.escape, noise)) + r")\b"
     cleaned = re.sub(pattern, " ", base, flags=re.IGNORECASE)
+
+    # collapse whitespace
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
 
+    # Look for 1–3 capitalised words in a row (likely a name)
     m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b", cleaned)
     if m:
         return first_name_only(m.group(1).strip())
@@ -222,37 +230,41 @@ def extract_name_from_filename(filename: str) -> str:
     return "[Client]"
 
 
+# --- Helper: Extract Prospect Name ---
 def extract_prospect_name(enquiry):
     closings = ["regards,", "best,", "sincerely,", "thanks,", "kind regards,"]
     for closing in closings:
         match = re.search(closing + r"\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE)
         if match:
             return first_name_only(match.group(1))
-
     match = re.search(r"my name is\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE)
     if match:
-        return first_name_only(match.group(1))
-
+            return first_name_only(match.group(1))
     return "[Client]"
 
-
 def first_name_only(name: str) -> str:
+    """
+    Convert a full name like "John Smith" to "John".
+    Leaves placeholders like "[Client]" untouched.
+    """
     if not name:
         return "[Client]"
     name = name.strip()
 
+    # Don't touch placeholders
     if name.startswith("[") and name.endswith("]"):
         return name
 
+    # Split on whitespace and return first token
     parts = name.split()
     return parts[0] if parts else "[Client]"
 
-
+# --- Helper: Embed Query ---
 def get_embedding(text, model="text-embedding-3-small"):
     result = openai.embeddings.create(input=[text], model=model)
     return result.data[0].embedding
 
-
+# --- Helper: Search Index ---
 def search_index(query, k=5):
     query_embedding = get_embedding(query)
     distances, indices = index.search(np.array([query_embedding], dtype=np.float32), k)
@@ -262,7 +274,6 @@ def search_index(query, k=5):
             results.append(metadata[i])
     return results
 
-
 def clean_transcript(text: str) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = re.sub(r'[ \t]+', ' ', text)
@@ -270,11 +281,10 @@ def clean_transcript(text: str) -> str:
     return text.strip()
 
 
-def chunk_text(text, max_words=2200):
+def chunk_text(text, max_words=1800):
     words = text.split()
     for i in range(0, len(words), max_words):
         yield " ".join(words[i:i+max_words])
-
 
 def build_chunk_prompt(chunk_text):
     return f"""
@@ -292,15 +302,15 @@ B. Client Objectives / Questions Raised
 - bullet points.
 
 C. Routes / Options Discussed (route-by-route notes)
-- For each route/option mentioned in this chunk, include:
-- Route/Option:
-- Why relevant to client:
-- Key requirements mentioned:
-- Application to facts:
-- Evidence position:
-- Risks / suitability / discretion:
-- Strategic choices:
-- Preliminary conclusion stated:
+For each route/option mentioned in this chunk, include:
+Route/Option:
+Why relevant to client:
+Key requirements mentioned:
+Application to facts:
+Evidence position:
+Risks / suitability / discretion:
+Strategic choices:
+Preliminary conclusion stated:
 
 D. Actions / Next Steps Mentioned
 - bullet points marked Confirmed or Suggested.
@@ -311,7 +321,6 @@ E. Ambiguities / Missing Info Identified
 Transcript chunk:
 \"\"\"{chunk_text}\"\"\"
 """
-
 
 def build_final_prompt(all_chunk_notes, gemini_summary, additional_instructions="", client_name="[Client]"):
     return f"""
@@ -346,12 +355,14 @@ OUTPUT STRUCTURE:
 - Sentence 3: lead-in explaining that the email summarises instructions, advice, fees and next steps.
 
 2. **Your Instructions**
-- Bullet point summary of KEY instructions and facts only (not every minor detail).
-- Aim for ~10–15 bullets unless the case is unusually complex.
-- Include: identity, immigration history, current status, intended route(s), timelines, dependants, critical constraints (e.g., absences, salary, documents, prior refusals).
-- Exclude: repeated preferences, side questions already covered in advice, or minor narrative detail.
-- Last bullet MUST start "You are seeking advice on..."
-- If two bullets would say the same thing, keep the clearer one and drop the other.
+- detailed bullets of facts
+- last bullet starts "You are seeking advice on..."
++ Bullet point summary of KEY instructions and facts only (not every minor detail).
++ Aim for ~10–15 bullets unless the case is unusually complex.
++ Include: identity, immigration history, current status, intended route(s), timelines, dependants, critical constraints (e.g., absences, salary, documents, prior refusals).
++ Exclude: repeated preferences, side questions already covered in advice, or minor narrative detail.
++ Last bullet MUST start "You are seeking advice on..."
++ If two bullets would say the same thing, keep the clearer one and drop the other.
 
 3. **Summary of Discussion and Legal Advice**
 Prose only. Must include:
@@ -400,28 +411,6 @@ Draft summary:
 """
 
 
-def generate_chunk_notes_parallel(transcript: str, max_words=2200, workers=4, chunk_token_cap=1000):
-    chunks = list(chunk_text(transcript, max_words=max_words))
-
-    notes = [None] * len(chunks)
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        future_to_i = {
-            ex.submit(
-                call_llm,
-                build_chunk_prompt(ch),
-                "gpt-5.1",
-                0.1,
-                chunk_token_cap
-            ): i
-            for i, ch in enumerate(chunks)
-        }
-        for fut in as_completed(future_to_i):
-            i = future_to_i[fut]
-            notes[i] = fut.result()
-
-    return notes
-
-
 def build_verification_prompt(final_summary, claims_json, sources_text):
     return f"""
 You are verifying legal accuracy of a post-consultation summary
@@ -431,8 +420,8 @@ Rules:
 - Use internal sources as authoritative.
 - If a claim is not clearly supported, flag it.
 - Do not invent new law.
-- Opening pleasantry must be 2–3 sentences and end with a scene-setting lead-in.
-- Example lead-in: "This email summarises the key instructions you gave, the advice we discussed, and the next steps including fees and timing."
++ Opening pleasantry must be 2–3 sentences and end with a scene-setting lead-in.
++ Example lead-in: "This email summarises the key instructions you gave, the advice we discussed, and the next steps including fees and timing."
 
 Draft summary:
 \"\"\"{final_summary}\"\"\"
@@ -452,16 +441,11 @@ For each claim, return:
 Return in clear numbered prose (not JSON).
 """
 
-def call_llm(prompt, model="gpt-5.1", temperature=0.2, max_completion_tokens=None):
-    kwargs = {}
-    if max_completion_tokens is not None:
-        kwargs["max_completion_tokens"] = max_completion_tokens  # ✅ GPT-5.1 wants this
-
+def call_llm(prompt, model="gpt-5.1", temperature=0.2):
     resp = openai.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        temperature=temperature,
-        **kwargs
+        temperature=temperature
     )
     return resp.choices[0].message.content
 
@@ -524,25 +508,20 @@ if generate:
 
     # 2) Stage A: chunk notes from full transcript
     with st.spinner("Reviewing transcript and drafting post-con email..."):
-
-        # Quality-first speed-up: parallel chunking, modestly larger chunks, roomy note cap
-        chunk_notes = generate_chunk_notes_parallel(
-            transcript,
-            max_words=2200,      # quality-first chunk size
-            workers=4,           # parallelism
-            chunk_token_cap=1000 # detailed scaffold notes, not rambling
-        )
+        chunk_notes = []
+        for chunk in chunk_text(transcript):
+            chunk_notes.append(call_llm(build_chunk_prompt(chunk), temperature=0.1))
 
         combined_notes = "\n\n".join(chunk_notes)
 
-        # Final email remains uncapped, full-detail gpt-5.1 synthesis
+        # 3) Stage B: final standardized post-con email summary
         final_prompt = build_final_prompt(
             combined_notes,
             summary_text,
             additional_instructions,
             client_name=client_name
         )
-        final_summary = call_llm(final_prompt, model="gpt-5.1", temperature=0.2)
+        final_summary = call_llm(final_prompt, temperature=0.2)
 
         # Safety net: prepend salutation if model didn't
         if not final_summary.lstrip().lower().startswith("dear "):
@@ -648,10 +627,11 @@ if generate:
             }});
 
             await navigator.clipboard.write([clipboardItem]);
-            alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
+                        alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
         }}
         </script>
         """,
         height=120,
         scrolling=False
     )
+
