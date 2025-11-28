@@ -547,7 +547,7 @@ if generate:
                     unique_sources.append(s)
                     seen.add(content)
 
-            sources_text = "\n\n---\n\n".join(
+            sources_text = "\n\n".join(
                 f"[{s.get('source','internal')}]\n{s.get('content','')}"
                 for s in unique_sources
             )
