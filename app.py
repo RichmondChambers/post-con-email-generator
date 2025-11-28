@@ -342,7 +342,9 @@ Rules:
 - Use second person ("you", "your").
 - Your Instructions must be bullet points. Other sections prose.
 - Where a route was discussed in any detail, devote at least one substantial paragraph.
-- Do not use horizontal rules or markdown separators (no "---").
+- Do NOT use horizontal rules or markdown separators (no "---").
+- Use normal email paragraph spacing. Avoid overly academic sectioning.
+- Do NOT include headings for the opening or closing.
 
 OUTPUT STRUCTURE:
 
@@ -355,6 +357,12 @@ OUTPUT STRUCTURE:
 2. **Your Instructions**
 - detailed bullets of facts
 - last bullet starts "You are seeking advice on..."
++ Bullet point summary of KEY instructions and facts only (not every minor detail).
++ Aim for ~10–15 bullets unless the case is unusually complex.
++ Include: identity, immigration history, current status, intended route(s), timelines, dependants, critical constraints (e.g., absences, salary, documents, prior refusals).
++ Exclude: repeated preferences, side questions already covered in advice, or minor narrative detail.
++ Last bullet MUST start "You are seeking advice on..."
++ If two bullets would say the same thing, keep the clearer one and drop the other.
 
 3. **Summary of Discussion and Legal Advice**
 Prose only. Must include:
