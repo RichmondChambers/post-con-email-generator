@@ -523,6 +523,25 @@ do_faiss_check = st.checkbox(
 
 generate = st.button("Generate Post-Con Email")
 
+st.markdown(
+    """
+    <style>
+    /* Style main section headings inside the app */
+    h2, h3 {
+        color: #009fdf !important;
+    }
+
+    /* If you treat bold numbered headings as “main sub-headings” */
+    .subheading {
+        color: #009fdf !important;
+        font-weight: 700;
+        font-size: 1.1rem;
+        margin-top: 0.8rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 if generate:
     if not full_pdf or not summary_pdf:
