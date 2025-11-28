@@ -292,15 +292,15 @@ B. Client Objectives / Questions Raised
 - bullet points.
 
 C. Routes / Options Discussed (route-by-route notes)
-For each route/option mentioned in this chunk, include:
-Route/Option:
-Why relevant to client:
-Key requirements mentioned:
-Application to facts:
-Evidence position:
-Risks / suitability / discretion:
-Strategic choices:
-Preliminary conclusion stated:
+- For each route/option mentioned in this chunk, include:
+- Route/Option:
+- Why relevant to client:
+- Key requirements mentioned:
+- Application to facts:
+- Evidence position:
+- Risks / suitability / discretion:
+- Strategic choices:
+- Preliminary conclusion stated:
 
 D. Actions / Next Steps Mentioned
 - bullet points marked Confirmed or Suggested.
@@ -346,14 +346,12 @@ OUTPUT STRUCTURE:
 - Sentence 3: lead-in explaining that the email summarises instructions, advice, fees and next steps.
 
 2. **Your Instructions**
-- detailed bullets of facts
-- last bullet starts "You are seeking advice on..."
-+ Bullet point summary of KEY instructions and facts only (not every minor detail).
-+ Aim for ~10–15 bullets unless the case is unusually complex.
-+ Include: identity, immigration history, current status, intended route(s), timelines, dependants, critical constraints (e.g., absences, salary, documents, prior refusals).
-+ Exclude: repeated preferences, side questions already covered in advice, or minor narrative detail.
-+ Last bullet MUST start "You are seeking advice on..."
-+ If two bullets would say the same thing, keep the clearer one and drop the other.
+- Bullet point summary of KEY instructions and facts only (not every minor detail).
+- Aim for ~10–15 bullets unless the case is unusually complex.
+- Include: identity, immigration history, current status, intended route(s), timelines, dependants, critical constraints (e.g., absences, salary, documents, prior refusals).
+- Exclude: repeated preferences, side questions already covered in advice, or minor narrative detail.
+- Last bullet MUST start "You are seeking advice on..."
+- If two bullets would say the same thing, keep the clearer one and drop the other.
 
 3. **Summary of Discussion and Legal Advice**
 Prose only. Must include:
@@ -383,7 +381,6 @@ Gemini summary (supportive only):
 Transcript notes (controlling):
 \"\"\"{all_chunk_notes.strip()}\"\"\"
 """
-
 
 def build_claim_extraction_prompt(final_summary):
     return f"""
@@ -434,8 +431,8 @@ Rules:
 - Use internal sources as authoritative.
 - If a claim is not clearly supported, flag it.
 - Do not invent new law.
-+ Opening pleasantry must be 2–3 sentences and end with a scene-setting lead-in.
-+ Example lead-in: "This email summarises the key instructions you gave, the advice we discussed, and the next steps including fees and timing."
+- Opening pleasantry must be 2–3 sentences and end with a scene-setting lead-in.
+- Example lead-in: "This email summarises the key instructions you gave, the advice we discussed, and the next steps including fees and timing."
 
 Draft summary:
 \"\"\"{final_summary}\"\"\"
@@ -456,10 +453,10 @@ Return in clear numbered prose (not JSON).
 """
 
 
-def call_llm(prompt, model="gpt-5.1", temperature=0.2, max_output_tokens=None):
+def call_llm(prompt, model="gpt-5.1", temperature=0.2, max_tokens=None):
     kwargs = {}
-    if max_output_tokens is not None:
-        kwargs["max_output_tokens"] = max_output_tokens
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens  # ✅ correct
 
     resp = openai.chat.completions.create(
         model=model,
@@ -468,7 +465,6 @@ def call_llm(prompt, model="gpt-5.1", temperature=0.2, max_output_tokens=None):
         **kwargs
     )
     return resp.choices[0].message.content
-
 
 # --- Streamlit App UI ---
 
