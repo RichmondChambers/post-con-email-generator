@@ -564,8 +564,7 @@ if generate:
 
     # --- ALWAYS show responsibility statement ---
     st.markdown(
-        """
-        ---  
+        """  
         **Professional Responsibility Statement**
 
         AI-generated content must not be relied upon without human review. Where such
