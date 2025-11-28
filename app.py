@@ -12,6 +12,7 @@ from markdown_it import MarkdownIt
 from index_builder import sync_drive_and_rebuild_index_if_needed, INDEX_FILE, METADATA_FILE
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
 def google_login():
     """
     Require the user to sign in with a Google account and restrict access
@@ -89,6 +90,7 @@ def google_login():
     # Stop the app here until the user has logged in
     st.stop()
 
+
 # --- Load API Key securely ---
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
@@ -98,7 +100,6 @@ user_email = google_login()
 # Optionally show who is logged in (for debugging)
 # st.write(f"Signed in as: {user_email}")
 
-# --- Load FAISS Index and Metadata ---
 
 def format_for_email(response_text):
     """
@@ -108,6 +109,7 @@ def format_for_email(response_text):
     formatted = response_text.replace("**", "")  # remove bold markup
     formatted = formatted.replace("\n\n", "\n")  # remove extra spacing
     return formatted.strip()
+
 
 st.markdown(
     """
@@ -140,6 +142,7 @@ def load_index_and_metadata():
         last_rebuilt = "Unknown"
 
     return index, metadata, last_rebuilt
+
 
 index, metadata, last_rebuilt = load_index_and_metadata()
 
@@ -181,7 +184,6 @@ def extract_text_from_uploaded_file(uploaded_file):
         return ""
 
 
-# ✅ WRAPPER GOES HERE
 def extract_pdf_text(uploaded_file):
     text = extract_text_from_uploaded_file(uploaded_file)
     if not text or len(text.strip()) < 50:
@@ -191,26 +193,18 @@ def extract_pdf_text(uploaded_file):
         )
     return text
 
+
 def extract_name_from_filename(filename: str) -> str:
     """
     Try to infer a client first name (or full name) from the transcript PDF filename.
     Returns "[Client]" if nothing reliable is found.
-
-    Examples it handles:
-    - "John Smith - Gemini Transcript.pdf" -> "John Smith"
-    - "2025-11-20 Maria_Garcia transcript.pdf" -> "Maria Garcia"
-    - "Transcript - Ahmed.pdf" -> "Ahmed"
     """
     if not filename:
         return "[Client]"
 
-    # strip extension
     base = re.sub(r"\.[^.]+$", "", filename)
-
-    # replace separators with spaces
     base = re.sub(r"[_\-]+", " ", base)
 
-    # remove common noise words
     noise = [
         "gemini", "transcript", "summary", "consultation",
         "call", "meeting", "recording", "notes",
@@ -219,11 +213,8 @@ def extract_name_from_filename(filename: str) -> str:
     ]
     pattern = r"\b(" + "|".join(map(re.escape, noise)) + r")\b"
     cleaned = re.sub(pattern, " ", base, flags=re.IGNORECASE)
-
-    # collapse whitespace
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
 
-    # Look for 1–3 capitalised words in a row (likely a name)
     m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b", cleaned)
     if m:
         return first_name_only(m.group(1).strip())
@@ -231,41 +222,37 @@ def extract_name_from_filename(filename: str) -> str:
     return "[Client]"
 
 
-# --- Helper: Extract Prospect Name ---
 def extract_prospect_name(enquiry):
     closings = ["regards,", "best,", "sincerely,", "thanks,", "kind regards,"]
     for closing in closings:
         match = re.search(closing + r"\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE)
         if match:
             return first_name_only(match.group(1))
+
     match = re.search(r"my name is\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE)
     if match:
-            return first_name_only(match.group(1))
+        return first_name_only(match.group(1))
+
     return "[Client]"
 
+
 def first_name_only(name: str) -> str:
-    """
-    Convert a full name like "John Smith" to "John".
-    Leaves placeholders like "[Client]" untouched.
-    """
     if not name:
         return "[Client]"
     name = name.strip()
 
-    # Don't touch placeholders
     if name.startswith("[") and name.endswith("]"):
         return name
 
-    # Split on whitespace and return first token
     parts = name.split()
     return parts[0] if parts else "[Client]"
 
-# --- Helper: Embed Query ---
+
 def get_embedding(text, model="text-embedding-3-small"):
     result = openai.embeddings.create(input=[text], model=model)
     return result.data[0].embedding
 
-# --- Helper: Search Index ---
+
 def search_index(query, k=5):
     query_embedding = get_embedding(query)
     distances, indices = index.search(np.array([query_embedding], dtype=np.float32), k)
@@ -274,6 +261,7 @@ def search_index(query, k=5):
         if i < len(metadata):
             results.append(metadata[i])
     return results
+
 
 def clean_transcript(text: str) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
@@ -286,6 +274,7 @@ def chunk_text(text, max_words=2200):
     words = text.split()
     for i in range(0, len(words), max_words):
         yield " ".join(words[i:i+max_words])
+
 
 def build_chunk_prompt(chunk_text):
     return f"""
@@ -322,6 +311,7 @@ E. Ambiguities / Missing Info Identified
 Transcript chunk:
 \"\"\"{chunk_text}\"\"\"
 """
+
 
 def build_final_prompt(all_chunk_notes, gemini_summary, additional_instructions="", client_name="[Client]"):
     return f"""
@@ -394,6 +384,7 @@ Transcript notes (controlling):
 \"\"\"{all_chunk_notes.strip()}\"\"\"
 """
 
+
 def build_claim_extraction_prompt(final_summary):
     return f"""
 Extract every legal proposition from this draft summary.
@@ -410,6 +401,8 @@ Return ONLY valid JSON in this format:
 Draft summary:
 \"\"\"{final_summary}\"\"\"
 """
+
+
 def generate_chunk_notes_parallel(transcript: str, max_words=2200, workers=4, chunk_token_cap=1000):
     chunks = list(chunk_text(transcript, max_words=max_words))
 
@@ -430,6 +423,7 @@ def generate_chunk_notes_parallel(transcript: str, max_words=2200, workers=4, ch
             notes[i] = fut.result()
 
     return notes
+
 
 def build_verification_prompt(final_summary, claims_json, sources_text):
     return f"""
@@ -461,6 +455,7 @@ For each claim, return:
 Return in clear numbered prose (not JSON).
 """
 
+
 def call_llm(prompt, model="gpt-5.1", temperature=0.2, max_output_tokens=None):
     kwargs = {}
     if max_output_tokens is not None:
@@ -473,6 +468,7 @@ def call_llm(prompt, model="gpt-5.1", temperature=0.2, max_output_tokens=None):
         **kwargs
     )
     return resp.choices[0].message.content
+
 
 # --- Streamlit App UI ---
 
@@ -534,24 +530,24 @@ if generate:
     # 2) Stage A: chunk notes from full transcript
     with st.spinner("Reviewing transcript and drafting post-con email..."):
 
-    # Quality-first speed-up: parallel chunking, modestly larger chunks, roomy note cap
-    chunk_notes = generate_chunk_notes_parallel(
-        transcript,
-        max_words=2200,      # quality-first chunk size
-        workers=4,           # parallelism
-        chunk_token_cap=1000 # detailed scaffold notes, not rambling
-    )
+        # Quality-first speed-up: parallel chunking, modestly larger chunks, roomy note cap
+        chunk_notes = generate_chunk_notes_parallel(
+            transcript,
+            max_words=2200,      # quality-first chunk size
+            workers=4,           # parallelism
+            chunk_token_cap=1000 # detailed scaffold notes, not rambling
+        )
 
-    combined_notes = "\n\n".join(chunk_notes)
+        combined_notes = "\n\n".join(chunk_notes)
 
-    # Final email remains uncapped, full-detail gpt-5.1 synthesis
-    final_prompt = build_final_prompt(
-        combined_notes,
-        summary_text,
-        additional_instructions,
-        client_name=client_name
-    )
-    final_summary = call_llm(final_prompt, model="gpt-5.1", temperature=0.2)
+        # Final email remains uncapped, full-detail gpt-5.1 synthesis
+        final_prompt = build_final_prompt(
+            combined_notes,
+            summary_text,
+            additional_instructions,
+            client_name=client_name
+        )
+        final_summary = call_llm(final_prompt, model="gpt-5.1", temperature=0.2)
 
         # Safety net: prepend salutation if model didn't
         if not final_summary.lstrip().lower().startswith("dear "):
@@ -657,11 +653,10 @@ if generate:
             }});
 
             await navigator.clipboard.write([clipboardItem]);
-                        alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
+            alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
         }}
         </script>
         """,
         height=120,
         scrolling=False
     )
-
