@@ -224,8 +224,8 @@ def extract_name_from_filename(filename: str) -> str:
 
     # Look for 1–3 capitalised words in a row (likely a name)
     m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b", cleaned)
-    if m:
-        return m.group(1).strip()
+if m:
+    return first_name_only(m.group(1).strip())
 
     return "[Client]"
 
@@ -235,11 +235,28 @@ def extract_prospect_name(enquiry):
     for closing in closings:
         match = re.search(closing + r"\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE)
         if match:
-            return match.group(1)
+            return first_name_only(match.group(1))
     match = re.search(r"my name is\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE)
     if match:
-        return match.group(1)
+            return first_name_only(match.group(1))
     return "[Client]"
+
+def first_name_only(name: str) -> str:
+    """
+    Convert a full name like "John Smith" to "John".
+    Leaves placeholders like "[Client]" untouched.
+    """
+    if not name:
+        return "[Client]"
+    name = name.strip()
+
+    # Don't touch placeholders
+    if name.startswith("[") and name.endswith("]"):
+        return name
+
+    # Split on whitespace and return first token
+    parts = name.split()
+    return parts[0] if parts else "[Client]"
 
 # --- Helper: Embed Query ---
 def get_embedding(text, model="text-embedding-3-small"):
