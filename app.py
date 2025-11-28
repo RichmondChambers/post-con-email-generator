@@ -9,14 +9,22 @@ import requests
 import jwt  # from PyJWT
 import streamlit.components.v1 as components
 from markdown_it import MarkdownIt
-from index_builder import sync_drive_and_rebuild_index_if_needed, INDEX_FILE, METADATA_FILE
 
+from index_builder import (
+    sync_drive_and_rebuild_index_if_needed,
+    INDEX_FILE,
+    METADATA_FILE,
+)
+
+
+# ----------------------------
+# Google OAuth login gate
+# ----------------------------
 def google_login():
     """
     Require the user to sign in with a Google account and restrict access
     to @richmondchambers.com email addresses.
     """
-
     # 1. If we already have a logged-in user in this session, allow access
     if "user_email" in st.session_state:
         return st.session_state["user_email"]
@@ -39,12 +47,13 @@ def google_login():
         )
 
         if token_response.status_code != 200:
-            st.error("Authentication with Google failed. Please refresh the page and try again.")
+            st.error(
+                "Authentication with Google failed. Please refresh the page and try again."
+            )
             st.stop()
 
         token_data = token_response.json()
         id_token = token_data.get("id_token")
-
         if not id_token:
             st.error("No ID token received from Google. Access cannot be granted.")
             st.stop()
@@ -70,7 +79,7 @@ def google_login():
             st.stop()
 
     # 3. If we get here, the user is not yet logged in.
-    #    Show a "Sign in with Google" link that starts the OAuth flow.
+    # Show a "Sign in with Google" link that starts the OAuth flow.
     auth_url = (
         "https://accounts.google.com/o/oauth2/v2/auth"
         "?response_type=code"
@@ -82,24 +91,31 @@ def google_login():
     )
 
     st.markdown("### Richmond Chambers – Internal Tool")
-    st.write("Please sign in with a Richmond Chambers Google Workspace account to access this app.")
+    st.write(
+        "Please sign in with a Richmond Chambers Google Workspace account to access this app."
+    )
     st.markdown(f"[Sign in with Google]({auth_url})")
 
     # Stop the app here until the user has logged in
     st.stop()
 
-# --- Load API Key securely ---
+
+# ----------------------------
+# OpenAI key + login enforcement
+# ----------------------------
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # 🔐 Enforce Google sign-in for @richmondchambers.com
 user_email = google_login()
 
-# Optionally show who is logged in (for debugging)
+# (Optional debug)
 # st.write(f"Signed in as: {user_email}")
 
-# --- Load FAISS Index and Metadata ---
 
-def format_for_email(response_text):
+# ----------------------------
+# Helpers
+# ----------------------------
+def format_for_email(response_text: str) -> str:
     """
     Cleans up the AI response so it's suitable for copying into an email.
     Removes Markdown and extra spacing.
@@ -108,55 +124,22 @@ def format_for_email(response_text):
     formatted = formatted.replace("\n\n", "\n")  # remove extra spacing
     return formatted.strip()
 
-st.markdown(
-    """
-    <div style="text-align: center; padding-bottom: 10px;">
-        <img src="https://raw.githubusercontent.com/RichmondChambers/richmond-immigration-assistant/main/assets/logo.png" width="150">
-    </div>
-    """,
-    unsafe_allow_html=True
-)
 
-# --- Load FAISS Index and Metadata ---
-@st.cache_resource
-def load_index_and_metadata():
-    """
-    Ensure FAISS index is up to date, then load index, metadata,
-    and read last rebuilt timestamp for UI display.
-    """
-    sync_drive_and_rebuild_index_if_needed()
-
-    index = faiss.read_index(INDEX_FILE)
-    with open(METADATA_FILE, "rb") as f:
-        metadata = pickle.load(f)
-
-    # Read the timestamp from drive_index_state.json
-    try:
-        with open("drive_index_state.json", "r") as f:
-            state = json.load(f)
-            last_rebuilt = state.get("last_rebuilt", "Unknown")
-    except Exception:
-        last_rebuilt = "Unknown"
-
-    return index, metadata, last_rebuilt
-
-index, metadata, last_rebuilt = load_index_and_metadata()
-
-# --- Helper: Extract Text From Uploaded File ---
-def extract_text_from_uploaded_file(uploaded_file):
+def extract_text_from_uploaded_file(uploaded_file) -> str:
     """
     Extract text content from an uploaded file.
-    Currently supports .txt directly; for PDF/DOCX you will need the
-    relevant libraries installed (PyPDF2 / python-docx).
+    Supports .txt directly; for PDF/DOCX you will need the relevant libraries
+    installed (PyPDF2 / python-docx).
     """
     name = uploaded_file.name.lower()
 
     if name.endswith(".txt"):
         return uploaded_file.read().decode("utf-8", errors="ignore")
 
-    elif name.endswith(".pdf"):
+    if name.endswith(".pdf"):
         try:
             import PyPDF2
+
             reader = PyPDF2.PdfReader(uploaded_file)
             text = ""
             for page in reader.pages:
@@ -165,9 +148,10 @@ def extract_text_from_uploaded_file(uploaded_file):
         except Exception:
             return ""
 
-    elif name.endswith(".docx"):
+    if name.endswith(".docx"):
         try:
             import docx
+
             doc = docx.Document(uploaded_file)
             return "\n".join(p.text for p in doc.paragraphs)
         except Exception:
@@ -180,8 +164,7 @@ def extract_text_from_uploaded_file(uploaded_file):
         return ""
 
 
-# ✅ WRAPPER GOES HERE
-def extract_pdf_text(uploaded_file):
+def extract_pdf_text(uploaded_file) -> str:
     text = extract_text_from_uploaded_file(uploaded_file)
     if not text or len(text.strip()) < 50:
         st.warning(
@@ -190,15 +173,25 @@ def extract_pdf_text(uploaded_file):
         )
     return text
 
+
+def first_name_only(name: str) -> str:
+    """Convert a full name like "John Smith" to "John". Leaves placeholders like "[Client]" untouched."""
+    if not name:
+        return "[Client]"
+    name = name.strip()
+
+    # Don't touch placeholders
+    if name.startswith("[") and name.endswith("]"):
+        return name
+
+    parts = name.split()
+    return parts[0] if parts else "[Client]"
+
+
 def extract_name_from_filename(filename: str) -> str:
     """
     Try to infer a client first name (or full name) from the transcript PDF filename.
     Returns "[Client]" if nothing reliable is found.
-
-    Examples it handles:
-    - "John Smith - Gemini Transcript.pdf" -> "John Smith"
-    - "2025-11-20 Maria_Garcia transcript.pdf" -> "Maria Garcia"
-    - "Transcript - Ahmed.pdf" -> "Ahmed"
     """
     if not filename:
         return "[Client]"
@@ -211,10 +204,20 @@ def extract_name_from_filename(filename: str) -> str:
 
     # remove common noise words
     noise = [
-        "gemini", "transcript", "summary", "consultation",
-        "call", "meeting", "recording", "notes",
-        "full", "final", "post con", "post-con",
-        "richmond", "chambers"
+        "gemini",
+        "transcript",
+        "summary",
+        "consultation",
+        "call",
+        "meeting",
+        "recording",
+        "notes",
+        "full",
+        "final",
+        "post con",
+        "post-con",
+        "richmond",
+        "chambers",
     ]
     pattern = r"\b(" + "|".join(map(re.escape, noise)) + r")\b"
     cleaned = re.sub(pattern, " ", base, flags=re.IGNORECASE)
@@ -230,66 +233,101 @@ def extract_name_from_filename(filename: str) -> str:
     return "[Client]"
 
 
-# --- Helper: Extract Prospect Name ---
-def extract_prospect_name(enquiry):
+def extract_prospect_name(enquiry: str) -> str:
     closings = ["regards,", "best,", "sincerely,", "thanks,", "kind regards,"]
     for closing in closings:
-        match = re.search(closing + r"\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE)
+        match = re.search(
+            closing + r"\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
+            enquiry,
+            re.IGNORECASE,
+        )
         if match:
             return first_name_only(match.group(1))
-    match = re.search(r"my name is\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE)
+
+    match = re.search(
+        r"my name is\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE
+    )
     if match:
-            return first_name_only(match.group(1))
+        return first_name_only(match.group(1))
+
     return "[Client]"
 
-def first_name_only(name: str) -> str:
-    """
-    Convert a full name like "John Smith" to "John".
-    Leaves placeholders like "[Client]" untouched.
-    """
-    if not name:
-        return "[Client]"
-    name = name.strip()
 
-    # Don't touch placeholders
-    if name.startswith("[") and name.endswith("]"):
-        return name
+def clean_transcript(text: str) -> str:
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"Meeting started.*?\n", "", text, flags=re.IGNORECASE)
+    return text.strip()
 
-    # Split on whitespace and return first token
-    parts = name.split()
-    return parts[0] if parts else "[Client]"
 
-# --- Helper: Embed Query ---
-def get_embedding(text, model="text-embedding-3-small"):
+def chunk_text(text: str, max_words: int = 1800):
+    words = text.split()
+    for i in range(0, len(words), max_words):
+        yield " ".join(words[i : i + max_words])
+
+
+def get_embedding(text: str, model: str = "text-embedding-3-small"):
     result = openai.embeddings.create(input=[text], model=model)
     return result.data[0].embedding
 
-# --- Helper: Search Index ---
-def search_index(query, k=5):
+
+def call_llm(prompt: str, model: str = "gpt-5.1", temperature: float = 0.2) -> str:
+    resp = openai.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+    )
+    return resp.choices[0].message.content
+
+
+# ----------------------------
+# Load FAISS Index and Metadata
+# ----------------------------
+@st.cache_resource
+def load_index_and_metadata():
+    """
+    Ensure FAISS index is up to date, then load index, metadata, and
+    read last rebuilt timestamp for UI display.
+    """
+    sync_drive_and_rebuild_index_if_needed()
+
+    index = faiss.read_index(INDEX_FILE)
+    with open(METADATA_FILE, "rb") as f:
+        metadata = pickle.load(f)
+
+    # Read the timestamp from drive_index_state.json
+    try:
+        with open("drive_index_state.json", "r") as f:
+            state = json.load(f)
+        last_rebuilt = state.get("last_rebuilt", "Unknown")
+    except Exception:
+        last_rebuilt = "Unknown"
+
+    return index, metadata, last_rebuilt
+
+
+index, metadata, last_rebuilt = load_index_and_metadata()
+
+
+def search_index(query: str, k: int = 5):
     query_embedding = get_embedding(query)
-    distances, indices = index.search(np.array([query_embedding], dtype=np.float32), k)
+    distances, indices = index.search(
+        np.array([query_embedding], dtype=np.float32),
+        k,
+    )
     results = []
     for i in indices[0]:
         if i < len(metadata):
             results.append(metadata[i])
     return results
 
-def clean_transcript(text: str) -> str:
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'Meeting started.*?\n', '', text, flags=re.IGNORECASE)
-    return text.strip()
 
-
-def chunk_text(text, max_words=1800):
-    words = text.split()
-    for i in range(0, len(words), max_words):
-        yield " ".join(words[i:i+max_words])
-
-def build_chunk_prompt(chunk_text):
+# ----------------------------
+# Prompt builders
+# ----------------------------
+def build_chunk_prompt(chunk: str) -> str:
     return f"""
 You are an experienced UK immigration barrister creating internal notes from ONE chunk of a full Gemini transcript.
-
 Work ONLY from this chunk. Do not invent facts. If something is unclear, say so.
 
 Return notes in this structure:
@@ -319,10 +357,16 @@ E. Ambiguities / Missing Info Identified
 - bullet points.
 
 Transcript chunk:
-\"\"\"{chunk_text}\"\"\"
-"""
+\"\"\"{chunk}\"\"\"
+""".strip()
 
-def build_final_prompt(all_chunk_notes, gemini_summary, additional_instructions="", client_name="[Client]"):
+
+def build_final_prompt(
+    all_chunk_notes: str,
+    gemini_summary: str,
+    additional_instructions: str = "",
+    client_name: str = "[Client]",
+) -> str:
     return f"""
 You are an experienced UK immigration barrister drafting a post-consultation follow-up email to a client.
 
@@ -342,12 +386,13 @@ Rules:
 - Use second person ("you", "your").
 - Your Instructions must be bullet points. Other sections prose.
 - Where a route was discussed in any detail, devote at least one substantial paragraph.
-- Do NOT use horizontal rules or markdown separators (no "---").
+- Opening pleasantry must be 2–3 sentences and end with a scene-setting lead-in.
+- Example lead-in: "This email summarises the key instructions you gave, the advice we discussed, and the next steps including fees and timing."
+- Do not use horizontal rules or markdown separators (no "---").
 - Use normal email paragraph spacing. Avoid overly academic sectioning.
-- Do NOT include headings for the opening or closing.
+- Do not include headings for the opening or closing.
 
 OUTPUT STRUCTURE:
-
 1. Opening Pleasantry (no heading)
 - 2–3 sentences.
 - Sentence 1: thanks / reference date.
@@ -355,14 +400,12 @@ OUTPUT STRUCTURE:
 - Sentence 3: lead-in explaining that the email summarises instructions, advice, fees and next steps.
 
 2. **Your Instructions**
-- detailed bullets of facts
-- last bullet starts "You are seeking advice on..."
-+ Bullet point summary of KEY instructions and facts only (not every minor detail).
-+ Aim for ~10–15 bullets unless the case is unusually complex.
-+ Include: identity, immigration history, current status, intended route(s), timelines, dependants, critical constraints (e.g., absences, salary, documents, prior refusals).
-+ Exclude: repeated preferences, side questions already covered in advice, or minor narrative detail.
-+ Last bullet MUST start "You are seeking advice on..."
-+ If two bullets would say the same thing, keep the clearer one and drop the other.
+- Bullet point summary of KEY instructions and facts only (not every minor detail).
+- Aim for ~8–15 bullets unless the case is unusually complex.
+- Include: identity, immigration history, current status, intended route(s), timelines, dependants, critical constraints (e.g., absences, salary, documents, prior refusals).
+- Exclude: repeated preferences, side questions already covered in advice, or minor narrative detail.
+- If two bullets would say the same thing, keep the clearer one and drop the other.
+- Last bullet MUST start "You are seeking advice on..."
 
 3. **Summary of Discussion and Legal Advice**
 Prose only. Must include:
@@ -391,37 +434,33 @@ Gemini summary (supportive only):
 
 Transcript notes (controlling):
 \"\"\"{all_chunk_notes.strip()}\"\"\"
-"""
+""".strip()
 
-def build_claim_extraction_prompt(final_summary):
+
+def build_claim_extraction_prompt(final_summary: str) -> str:
     return f"""
 Extract every legal proposition from this draft summary.
-
 Return ONLY valid JSON in this format:
 [
-  {{
-    "claim": "...",
-    "topic": "short label"
-  }},
+  {{ "claim": "...", "topic": "short label" }},
   ...
 ]
 
 Draft summary:
 \"\"\"{final_summary}\"\"\"
-"""
+""".strip()
 
 
-def build_verification_prompt(final_summary, claims_json, sources_text):
+def build_verification_prompt(
+    final_summary: str, claims_json: str, sources_text: str
+) -> str:
     return f"""
-You are verifying legal accuracy of a post-consultation summary
-against internal Richmond Chambers knowledge.
+You are verifying legal accuracy of a post-consultation summary against internal Richmond Chambers knowledge.
 
 Rules:
 - Use internal sources as authoritative.
 - If a claim is not clearly supported, flag it.
 - Do not invent new law.
-+ Opening pleasantry must be 2–3 sentences and end with a scene-setting lead-in.
-+ Example lead-in: "This email summarises the key instructions you gave, the advice we discussed, and the next steps including fees and timing."
 
 Draft summary:
 \"\"\"{final_summary}\"\"\"
@@ -439,38 +478,39 @@ For each claim, return:
 - what to revise (if needed)
 
 Return in clear numbered prose (not JSON).
-"""
+""".strip()
 
-def call_llm(prompt, model="gpt-5.1", temperature=0.2):
-    resp = openai.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=temperature
-    )
-    return resp.choices[0].message.content
 
-# --- Streamlit App UI ---
+# ----------------------------
+# Streamlit app UI
+# ----------------------------
+st.markdown(
+    """
+<div style="text-align: center; padding-bottom: 10px;">
+  <img src="https://raw.githubusercontent.com/RichmondChambers/richmond-immigration-assistant/main/assets/logo.png" width="150">
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 st.markdown(
     "<h1 style='text-align: center; font-size: 2.6rem;'>Post-Con Email Generator</h1>",
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f"<p style='color: grey; text-align: center; font-size: 0.9rem;'>"
+    f"Immigration law knowledge last rebuilt from Drive on: <b>{last_rebuilt}</b></p>",
+    unsafe_allow_html=True,
 )
 
-st.markdown(
-    f"<p style='color: grey; text-align: center; font-size: 0.9rem;'>Immigration law knowledge last rebuilt from Drive on: <b>{last_rebuilt}</b></p>",
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    "Upload the full Gemini transcript PDF and the Gemini summary PDF. "
-)
+st.markdown("Upload the full Gemini transcript PDF and the Gemini summary PDF.")
 
 full_pdf = st.file_uploader("Full Gemini transcript (PDF)", type=["pdf"])
 summary_pdf = st.file_uploader("Gemini summary (PDF)", type=["pdf"])
 
 additional_instructions = st.text_area(
     "Additional instructions (optional)",
-    height=150
+    height=150,
 )
 
 do_faiss_check = st.checkbox(
@@ -488,7 +528,6 @@ if generate:
     # 1) Extract text from PDFs
     full_text = extract_pdf_text(full_pdf)
     summary_text = extract_pdf_text(summary_pdf)
-
     transcript = clean_transcript(full_text)
 
     # 0) Try filename first
@@ -519,13 +558,13 @@ if generate:
             combined_notes,
             summary_text,
             additional_instructions,
-            client_name=client_name
+            client_name=client_name,
         )
         final_summary = call_llm(final_prompt, temperature=0.2)
 
-        # Safety net: prepend salutation if model didn't
-        if not final_summary.lstrip().lower().startswith("dear "):
-            final_summary = f"Dear {client_name},\n\n{final_summary.lstrip()}"
+    # Safety net: prepend salutation if model didn't
+    if not final_summary.lstrip().lower().startswith("dear "):
+        final_summary = f"Dear {client_name},\n\n{final_summary.lstrip()}"
 
     st.success("Post-con email generated.")
     st.text_area("Email-ready summary", value=final_summary, height=650)
@@ -556,15 +595,14 @@ if generate:
                     unique_sources.append(s)
                     seen.add(content)
 
+            # NOTE: no horizontal rule separators to avoid GDocs HR artifacts
             sources_text = "\n\n".join(
                 f"[{s.get('source','internal')}]\n{s.get('content','')}"
                 for s in unique_sources
             )
 
             verification_prompt = build_verification_prompt(
-                final_summary,
-                claims_text,
-                sources_text
+                final_summary, claims_text, sources_text
             )
             verification_report = call_llm(verification_prompt, temperature=0.0)
 
@@ -573,15 +611,14 @@ if generate:
 
     # --- ALWAYS show responsibility statement ---
     st.markdown(
-        """  
-        **Professional Responsibility Statement**
+        """
+**Professional Responsibility Statement**
 
-        AI-generated content must not be relied upon without human review. Where such
-        content is used, the barrister is responsible for verifying and ensuring the accuracy
-        and legal soundness of that content. AI tools are used solely to support drafting and
-        research; they do not replace the barrister’s independent judgment, analysis, or duty
-        of care.
-        """,
+AI-generated content must not be relied upon without human review. Where such content is used,
+the barrister is responsible for verifying and ensuring the accuracy and legal soundness of that content.
+AI tools are used solely to support drafting and research; they do not replace the barrister’s independent
+judgment, analysis, or duty of care.
+""",
         unsafe_allow_html=False,
     )
 
@@ -589,49 +626,52 @@ if generate:
     md = MarkdownIt()
     html_reply = md.render(final_summary)
 
+    # Escape for safe JS embedding
+    html_js = json.dumps(html_reply)
+    text_js = json.dumps(final_summary)
+
     components.html(
         f"""
-        <style>
-        .copy-button {{
-            margin-top: 10px;
-            padding: 8px 16px;
-            background-color: #2e2e2e;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background-color 0.2s ease, transform 0.1s ease;
-        }}
-        .copy-button:hover {{
-            background-color: #4a4a4a;
-        }}
-        .copy-button:active {{
-            background-color: #3a3a3a;
-            transform: scale(0.98);
-        }}
-        </style>
+<style>
+.copy-button {{
+  margin-top: 10px;
+  padding: 8px 16px;
+  background-color: #2e2e2e;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}}
+.copy-button:hover {{
+  background-color: #4a4a4a;
+}}
+.copy-button:active {{
+  background-color: #3a3a3a;
+  transform: scale(0.98);
+}}
+</style>
 
-        <button class="copy-button" onclick="copyToClipboard()">📋 Copy to Clipboard</button>
+<button class="copy-button" onclick="copyToClipboard()">📋 Copy to Clipboard</button>
 
-        <script>
-        async function copyToClipboard() {{
-            const htmlContent = `{html_reply.replace("`", "\\`")}`;
-            const plainText = `{final_summary.replace("`", "\\`")}`;
+<script>
+async function copyToClipboard() {{
+  const htmlContent = {html_js};
+  const plainText = {text_js};
 
-            const blobHtml = new Blob([htmlContent], {{ type: 'text/html' }});
-            const blobText = new Blob([plainText], {{ type: 'text/plain' }});
+  const blobHtml = new Blob([htmlContent], {{ type: 'text/html' }});
+  const blobText = new Blob([plainText], {{ type: 'text/plain' }});
 
-            const clipboardItem = new ClipboardItem({{
-                'text/html': blobHtml,
-                'text/plain': blobText
-            }});
+  const clipboardItem = new ClipboardItem({{
+    'text/html': blobHtml,
+    'text/plain': blobText
+  }});
 
-            await navigator.clipboard.write([clipboardItem]);
-                        alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
-        }}
-        </script>
-        """,
+  await navigator.clipboard.write([clipboardItem]);
+  alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
+}}
+</script>
+""",
         height=120,
-        scrolling=False
+        scrolling=False,
     )
-
