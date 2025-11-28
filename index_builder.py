@@ -286,7 +286,7 @@ def rebuild_index_from_drive(files: List[Dict]):
     # 7. Save index and metadata
     faiss.write_index(index, INDEX_FILE)
     with open(METADATA_FILE, "wb") as f:
-            pickle.dump(metadata, f)
+        pickle.dump(metadata, f)
 
 
 def sync_drive_and_rebuild_index_if_needed():
