@@ -452,11 +452,10 @@ For each claim, return:
 Return in clear numbered prose (not JSON).
 """
 
-
-def call_llm(prompt, model="gpt-5.1", temperature=0.2, max_tokens=None):
+def call_llm(prompt, model="gpt-5.1", temperature=0.2, max_completion_tokens=None):
     kwargs = {}
-    if max_tokens is not None:
-        kwargs["max_tokens"] = max_tokens  # ✅ correct
+    if max_completion_tokens is not None:
+        kwargs["max_completion_tokens"] = max_completion_tokens  # ✅ GPT-5.1 wants this
 
     resp = openai.chat.completions.create(
         model=model,
