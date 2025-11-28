@@ -391,6 +391,10 @@ Rules:
 - Do not use horizontal rules or markdown separators (no "---").
 - Use normal email paragraph spacing. Avoid overly academic sectioning.
 - Do not include headings for the opening or closing.
+- **All numbered section headings (2–7) MUST be bold exactly as written below, using Markdown bold (e.g., **Heading**). Do not rename or omit them.**
+- **Within section 3, add a few short bold subheadings to break up the prose. Use only bold (not H2/H3). Make them case-appropriate and limited in number (typically 2–5).**
+  - Example subheadings you may use where relevant: **Key issues**, **Routes/options discussed**, **Evidence and risks**, **Recommendation**.
+  - If multiple routes are discussed, you may use route-specific subheadings like **Skilled Worker route**, **Global Talent route**, etc.
 
 OUTPUT STRUCTURE:
 1. Opening Pleasantry (no heading)
@@ -408,7 +412,7 @@ OUTPUT STRUCTURE:
 - Last bullet MUST start "You are seeking advice on..."
 
 3. **Summary of Discussion and Legal Advice**
-Prose only. Must include:
+Prose only, but broken up with a few short bold subheadings. Must include:
 - issue framing
 - route-by-route paragraphs covering: relevance, requirements, application to facts, evidence, risks, strategy, preliminary conclusion
 - brief comparison if multiple routes
