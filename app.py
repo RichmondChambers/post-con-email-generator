@@ -223,9 +223,9 @@ def extract_name_from_filename(filename: str) -> str:
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
 
     # Look for 1–3 capitalised words in a row (likely a name)
-m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b", cleaned)
-if m:
-return first_name_only(m.group(1).strip())
+    m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b", cleaned)
+    if m:
+    return first_name_only(m.group(1).strip())
 
 return "[Client]"
 
