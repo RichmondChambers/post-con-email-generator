@@ -346,6 +346,10 @@ Rules:
 OUTPUT STRUCTURE:
 
 1. Opening Pleasantry (no heading)
++ - 2–3 sentences.
++ - Sentence 1: thanks / reference date.
++ - Sentence 2: empathy / reassurance.
++ - Sentence 3: lead-in explaining that the email summarises instructions, advice, fees and next steps.
 
 2. **Your Instructions**
 - detailed bullets of facts
@@ -407,6 +411,8 @@ Rules:
 - Use internal sources as authoritative.
 - If a claim is not clearly supported, flag it.
 - Do not invent new law.
++ Opening pleasantry must be 2–3 sentences and end with a scene-setting lead-in.
++ Example lead-in: "This email summarises the key instructions you gave, the advice we discussed, and the next steps including fees and timing."
 
 Draft summary:
 \"\"\"{final_summary}\"\"\"
