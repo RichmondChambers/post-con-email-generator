@@ -9,11 +9,13 @@ import requests
 import jwt  # from PyJWT
 import streamlit.components.v1 as components
 from markdown_it import MarkdownIt
+import os  # ✅ NEW
 
 from index_builder import (
     sync_drive_and_rebuild_index_if_needed,
     INDEX_FILE,
     METADATA_FILE,
+    STATE_FILE,  # ✅ NEW: use the same absolute state file path as index_builder
 )
 
 
@@ -283,30 +285,42 @@ def call_llm(prompt: str, model: str = "gpt-5.1", temperature: float = 0.2) -> s
 # ----------------------------
 # Load FAISS Index and Metadata
 # ----------------------------
-@st.cache_resource
+@st.cache_resource(ttl=86400)  # ✅ NEW: daily Drive check/rebuild
 def load_index_and_metadata():
     """
-    Ensure FAISS index is up to date, then load index, metadata, and
-    read last rebuilt timestamp for UI display.
+    Ensure FAISS index is up to date (daily TTL), then load index and metadata.
+    Timestamp is read outside cache for live UI.
     """
-    sync_drive_and_rebuild_index_if_needed()
+    did_rebuild = sync_drive_and_rebuild_index_if_needed()
 
     index = faiss.read_index(INDEX_FILE)
     with open(METADATA_FILE, "rb") as f:
         metadata = pickle.load(f)
 
-    # Read the timestamp from drive_index_state.json
+    return index, metadata, did_rebuild
+
+
+def load_last_rebuilt_timestamp() -> str:
+    """
+    Read last rebuilt time from STATE_FILE (not cached).
+    This avoids Streamlit cache freezing the banner.
+    """
     try:
-        with open("drive_index_state.json", "r") as f:
-            state = json.load(f)
-        last_rebuilt = state.get("last_rebuilt", "Unknown")
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r") as f:
+                state = json.load(f)
+            return state.get("last_rebuilt", "Unknown")
+        return "Unknown"
     except Exception:
-        last_rebuilt = "Unknown"
-
-    return index, metadata, last_rebuilt
+        return "Unknown"
 
 
-index, metadata, last_rebuilt = load_index_and_metadata()
+index, metadata, did_rebuild = load_index_and_metadata()
+last_rebuilt = load_last_rebuilt_timestamp()
+
+# ✅ Optional toast so you know the daily rebuild happened
+if did_rebuild:
+    st.toast("Immigration law knowledge refreshed from Drive.")
 
 
 def search_index(query: str, k: int = 5):
@@ -491,7 +505,7 @@ Return in clear numbered prose (not JSON).
 st.markdown(
     """
 <div style="text-align: center; padding-bottom: 10px;">
-  <img src="https://raw.githubusercontent.com/RichmondChambers/richmond-immigration-assistant/main/assets/logo.png" width="150">
+  <img src="https://raw.githubusercontent.com/Richmondchambers/richmond-immigration-assistant/main/assets/logo.png" width="150">
 </div>
 """,
     unsafe_allow_html=True,
