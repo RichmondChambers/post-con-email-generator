@@ -18,14 +18,18 @@ from googleapiclient.http import MediaIoBaseDownload
 
 import streamlit as st
 
+# ----------------------------
+# Paths (robust on Streamlit Cloud)
+# ----------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # 🔹 Folder ID of your UK-Immigration-Knowledge folder in Drive
-# You already had this ID in your previous code:
 DRIVE_FOLDER_ID = "13J-DiERhtS1VWgF2GtZ1wnMfbUzkq6-G"
 
-# 🔹 Local files the app uses
-INDEX_FILE = "faiss_index.index"
-METADATA_FILE = "metadata.pkl"
-STATE_FILE = "drive_index_state.json"  # to detect changes (optional)
+# 🔹 Local files the app uses (absolute paths)
+INDEX_FILE = os.path.join(BASE_DIR, "faiss_index.index")
+METADATA_FILE = os.path.join(BASE_DIR, "metadata.pkl")
+STATE_FILE = os.path.join(BASE_DIR, "drive_index_state.json")  # detect changes + timestamp
 
 
 def get_drive_service():
@@ -47,9 +51,8 @@ def list_files_recursive(folder_id: str, service) -> List[Dict]:
     Recursively list all non-folder files under a Drive folder (including sub-folders).
     """
     files: List[Dict] = []
-
-    # First, list direct children of this folder
     page_token = None
+
     while True:
         response = service.files().list(
             q=f"'{folder_id}' in parents and trashed = false",
@@ -60,12 +63,11 @@ def list_files_recursive(folder_id: str, service) -> List[Dict]:
         for f in response.get("files", []):
             mime_type = f.get("mimeType", "")
             if mime_type == "application/vnd.google-apps.folder":
-                # Recurse into sub-folder
                 files.extend(list_files_recursive(f["id"], service))
             else:
                 files.append(f)
 
-        page_token = response.get("nextPageToken", None)
+        page_token = response.get("nextPageToken")
         if page_token is None:
             break
 
@@ -83,12 +85,17 @@ def list_drive_files() -> List[Dict]:
 
 def load_previous_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
     return {}
 
 
 def save_state(state):
+    # Ensure directory exists (BASE_DIR always exists, but safe anyway)
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
 
@@ -112,7 +119,6 @@ def download_file_bytes(service, file):
     mime_type = file.get("mimeType", "")
 
     if mime_type == "application/vnd.google-apps.document":
-        # Google Docs → export as DOCX
         request = service.files().export_media(
             fileId=file_id,
             mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -126,7 +132,7 @@ def download_file_bytes(service, file):
     downloader = MediaIoBaseDownload(fh, request)
     done = False
     while not done:
-        status, done = downloader.next_chunk()
+        _, done = downloader.next_chunk()
     fh.seek(0)
     return fh.read(), effective_mime
 
@@ -134,11 +140,10 @@ def download_file_bytes(service, file):
 def extract_text_from_bytes(file_bytes: bytes, mime_type: str, file_name: str) -> str:
     """
     Convert downloaded bytes into plain text, depending on MIME type / extension.
-    Supports DOCX, PDF, TXT, MD. Extend if needed.
+    Supports DOCX, PDF, TXT, MD.
     """
     name_lower = file_name.lower()
 
-    # DOCX (including exported Google Docs)
     if (
         mime_type
         == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -147,23 +152,19 @@ def extract_text_from_bytes(file_bytes: bytes, mime_type: str, file_name: str) -
         doc = docx.Document(io.BytesIO(file_bytes))
         return "\n".join(p.text for p in doc.paragraphs)
 
-    # PDF
     if mime_type == "application/pdf" or name_lower.endswith(".pdf"):
         reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
         pages = []
         for page in reader.pages:
-            text = page.extract_text() or ""
-            pages.append(text)
+            pages.append(page.extract_text() or "")
         return "\n\n".join(pages)
 
-    # Plain text
-    if mime_type.startswith("text/") or name_lower.endswith(".txt") or name_lower.endswith(".md"):
+    if mime_type.startswith("text/") or name_lower.endswith((".txt", ".md")):
         try:
             return file_bytes.decode("utf-8")
         except UnicodeDecodeError:
             return file_bytes.decode("latin-1", errors="ignore")
 
-    # Fallback
     try:
         return file_bytes.decode("utf-8")
     except UnicodeDecodeError:
@@ -171,9 +172,6 @@ def extract_text_from_bytes(file_bytes: bytes, mime_type: str, file_name: str) -
 
 
 def split_into_chunks(text: str, max_chars: int = 1500, overlap: int = 200):
-    """
-    Simple character-based chunking with overlap.
-    """
     text = text.strip()
     if not text:
         return []
@@ -197,25 +195,21 @@ def embed_texts(texts, model="text-embedding-3-small", batch_size=16) -> np.ndar
     """
     Get embeddings for a list of texts using OpenAI embeddings API,
     with basic rate-limit handling.
-
-    - Uses smaller batches (default 16) to reduce tokens per request.
-    - If a RateLimitError is hit, waits a few seconds and retries.
     """
     all_embeddings = []
+
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
 
         while True:
             try:
-                response = openai.embeddings.create(
-                    input=batch,
-                    model=model,
-                )
-                break  # success, exit the retry loop
+                response = openai.embeddings.create(input=batch, model=model)
+                break
             except openai.RateLimitError as e:
-                # Simple backoff: wait then retry the same batch
                 wait_seconds = 5
-                print(f"[index_builder] Rate limit hit, sleeping {wait_seconds}s and retrying batch {i // batch_size}: {e}")
+                print(
+                    f"[index_builder] Rate limit hit, sleeping {wait_seconds}s and retrying batch {i // batch_size}: {e}"
+                )
                 time.sleep(wait_seconds)
 
         for item in response.data:
@@ -224,13 +218,11 @@ def embed_texts(texts, model="text-embedding-3-small", batch_size=16) -> np.ndar
     return np.array(all_embeddings, dtype=np.float32)
 
 
-
 def rebuild_index_from_drive(files: List[Dict]):
     """
     Download files, extract text, chunk, embed, and rebuild FAISS + metadata.
     """
     service = get_drive_service()
-
     all_chunks = []
     metadata = []
 
@@ -239,22 +231,16 @@ def rebuild_index_from_drive(files: List[Dict]):
         file_name = file.get("name", "unnamed")
         mime_type = file.get("mimeType", "")
 
-        # Skip if it's a folder (shouldn't happen here, but just in case)
         if mime_type == "application/vnd.google-apps.folder":
             continue
 
-        # 1. Download file bytes
         file_bytes, effective_mime = download_file_bytes(service, file)
-
-        # 2. Extract text
         text = extract_text_from_bytes(file_bytes, effective_mime, file_name)
         if not text.strip():
             continue
 
-        # 3. Split into chunks
         chunks = split_into_chunks(text)
 
-        # 4. Add to master list with metadata
         for idx, chunk in enumerate(chunks):
             all_chunks.append(chunk)
             metadata.append(
@@ -266,24 +252,21 @@ def rebuild_index_from_drive(files: List[Dict]):
                 }
             )
 
+    # If no text found, still write an empty index but don't crash
     if not all_chunks:
-        # No text → create an empty index
-        dim = 1536  # embedding dimension for text-embedding-3-small
+        dim = 1536
         index = faiss.IndexFlatL2(dim)
         faiss.write_index(index, INDEX_FILE)
         with open(METADATA_FILE, "wb") as f:
             pickle.dump([], f)
         return
 
-    # 5. Embed chunks
     embeddings = embed_texts(all_chunks, model="text-embedding-3-small")
 
-    # 6. Build FAISS index
     dim = embeddings.shape[1]
     index = faiss.IndexFlatL2(dim)
     index.add(embeddings)
 
-    # 7. Save index and metadata
     faiss.write_index(index, INDEX_FILE)
     with open(METADATA_FILE, "wb") as f:
         pickle.dump(metadata, f)
@@ -298,15 +281,21 @@ def sync_drive_and_rebuild_index_if_needed():
     previous_state = load_previous_state()
     changed, current_state = have_files_changed(files, previous_state)
 
-    if changed or not os.path.exists(INDEX_FILE) or not os.path.exists(METADATA_FILE):
+    needs_rebuild = (
+        changed
+        or not os.path.exists(INDEX_FILE)
+        or not os.path.exists(METADATA_FILE)
+    )
+
+    if needs_rebuild:
         rebuild_index_from_drive(files)
 
-        # Save new state + timestamp of rebuild
-        save_state({
-            "files": current_state,
-            "last_rebuilt": datetime.datetime.utcnow().isoformat() + "Z"
-        })
+        save_state(
+            {
+                "files": current_state,
+                "last_rebuilt": datetime.datetime.utcnow().isoformat() + "Z",
+            }
+        )
         return True
 
     return False
-
