@@ -16,7 +16,6 @@ from index_builder import (
     INDEX_FILE,
     METADATA_FILE,
     STATE_FILE,
-    list_drive_files,  # ✅ for debug visibility
 )
 
 
@@ -196,7 +195,7 @@ def extract_prospect_name(enquiry: str) -> str:
             return first_name_only(match.group(1))
 
     match = re.search(
-        r"my name is\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", enquiry, re.IGNORECASE
+        r"my name is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", enquiry, re.IGNORECASE
     )
     if match:
         return first_name_only(match.group(1))
@@ -264,36 +263,6 @@ last_rebuilt = load_last_rebuilt_timestamp()
 
 if did_rebuild:
     st.toast("Immigration law knowledge refreshed from Drive.")
-
-
-# ✅ Manual rebuild button (bypasses TTL)
-col_a, col_b = st.columns([1, 3])
-with col_a:
-    if st.button("Force rebuild now"):
-        with st.spinner("Forcing Drive sync + rebuild..."):
-            _ = sync_drive_and_rebuild_index_if_needed()
-        st.cache_resource.clear()
-        st.success("Rebuild complete. Please refresh the page.")
-with col_b:
-    st.caption("Use this if you’ve added new knowledge and want an immediate refresh.")
-
-
-# ✅ Debug expander to confirm Drive visibility
-with st.expander("Debug: Drive knowledge status", expanded=False):
-    st.write("STATE_FILE path:", STATE_FILE)
-    st.write("STATE_FILE exists?:", os.path.exists(STATE_FILE))
-
-    try:
-        files_dbg = list_drive_files()
-        st.write("Drive files visible to service account:", len(files_dbg))
-        if len(files_dbg) == 0:
-            st.warning(
-                "0 files found. On Streamlit Cloud this usually means the folder is "
-                "on a Shared Drive and list calls need supportsAllDrives/includeItemsFromAllDrives "
-                "or the service account lacks access."
-            )
-    except Exception as e:
-        st.error(f"Drive listing error: {e}")
 
 
 def search_index(query: str, k: int = 5):
