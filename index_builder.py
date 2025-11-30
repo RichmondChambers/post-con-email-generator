@@ -49,6 +49,7 @@ def get_drive_service():
 def list_files_recursive(folder_id: str, service) -> List[Dict]:
     """
     Recursively list all non-folder files under a Drive folder (including sub-folders).
+    Supports Shared Drives via supportsAllDrives/includeItemsFromAllDrives.
     """
     files: List[Dict] = []
     page_token = None
@@ -58,6 +59,8 @@ def list_files_recursive(folder_id: str, service) -> List[Dict]:
             q=f"'{folder_id}' in parents and trashed = false",
             fields="nextPageToken, files(id, name, mimeType, modifiedTime)",
             pageToken=page_token,
+            supportsAllDrives=True,          # ✅ critical for Shared Drives
+            includeItemsFromAllDrives=True,  # ✅ critical for Shared Drives
         ).execute()
 
         for f in response.get("files", []):
@@ -94,7 +97,6 @@ def load_previous_state():
 
 
 def save_state(state):
-    # Ensure directory exists (BASE_DIR always exists, but safe anyway)
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
@@ -125,7 +127,10 @@ def download_file_bytes(service, file):
         )
         effective_mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     else:
-        request = service.files().get_media(fileId=file_id)
+        request = service.files().get_media(
+            fileId=file_id,
+            supportsAllDrives=True  # ✅ allow downloads from Shared Drives too
+        )
         effective_mime = mime_type
 
     fh = io.BytesIO()
@@ -252,7 +257,6 @@ def rebuild_index_from_drive(files: List[Dict]):
                 }
             )
 
-    # If no text found, still write an empty index but don't crash
     if not all_chunks:
         dim = 1536
         index = faiss.IndexFlatL2(dim)
@@ -289,7 +293,6 @@ def sync_drive_and_rebuild_index_if_needed():
 
     if needs_rebuild:
         rebuild_index_from_drive(files)
-
         save_state(
             {
                 "files": current_state,
@@ -297,5 +300,14 @@ def sync_drive_and_rebuild_index_if_needed():
             }
         )
         return True
+
+    # ✅ NEW: if state file doesn't exist yet, write one anyway so banner isn't stuck on Unknown
+    if not os.path.exists(STATE_FILE):
+        save_state(
+            {
+                "files": current_state,
+                "last_rebuilt": datetime.datetime.utcnow().isoformat() + "Z",
+            }
+        )
 
     return False
