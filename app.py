@@ -257,14 +257,6 @@ def load_last_rebuilt_timestamp() -> str:
     except Exception:
         return "Unknown"
 
-
-index, metadata, did_rebuild = load_index_and_metadata()
-last_rebuilt = load_last_rebuilt_timestamp()
-
-if did_rebuild:
-    st.toast("Immigration law knowledge refreshed from Drive.")
-
-
 def search_index(query: str, k: int = 5):
     query_embedding = get_embedding(query)
     distances, indices = index.search(
