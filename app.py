@@ -257,6 +257,13 @@ def load_last_rebuilt_timestamp() -> str:
     except Exception:
         return "Unknown"
 
+
+# ---- IMPORTANT: restore these globals, but NO toast ----
+index, metadata, did_rebuild = load_index_and_metadata()
+last_rebuilt = load_last_rebuilt_timestamp()
+# (intentionally no st.toast here)
+
+
 def search_index(query: str, k: int = 5):
     query_embedding = get_embedding(query)
     distances, indices = index.search(
