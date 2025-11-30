@@ -9,13 +9,14 @@ import requests
 import jwt  # from PyJWT
 import streamlit.components.v1 as components
 from markdown_it import MarkdownIt
-import os  # ✅ NEW
+import os
 
 from index_builder import (
     sync_drive_and_rebuild_index_if_needed,
     INDEX_FILE,
     METADATA_FILE,
-    STATE_FILE,  # ✅ NEW: use the same absolute state file path as index_builder
+    STATE_FILE,
+    list_drive_files,  # ✅ NEW: for debug visibility
 )
 
 
@@ -27,16 +28,13 @@ def google_login():
     Require the user to sign in with a Google account and restrict access
     to @richmondchambers.com email addresses.
     """
-    # 1. If we already have a logged-in user in this session, allow access
     if "user_email" in st.session_state:
         return st.session_state["user_email"]
 
-    # 2. Check if Google has redirected back with a ?code=... parameter
     params = st.experimental_get_query_params()
     if "code" in params:
         code = params["code"][0]
 
-        # Exchange the code for tokens
         token_response = requests.post(
             "https://oauth2.googleapis.com/token",
             data={
@@ -60,9 +58,6 @@ def google_login():
             st.error("No ID token received from Google. Access cannot be granted.")
             st.stop()
 
-        # Decode the ID token to get the user's email address.
-        # For simplicity we skip signature verification here.
-        # For a stricter setup, you would verify the token using Google's public keys.
         try:
             claims = jwt.decode(id_token, options={"verify_signature": False})
         except Exception:
@@ -70,9 +65,8 @@ def google_login():
             st.stop()
 
         email = claims.get("email", "")
-        hosted_domain = claims.get("hd", "")  # sometimes set to 'richmondchambers.com'
+        hosted_domain = claims.get("hd", "")
 
-        # Enforce @richmondchambers.com
         if email.endswith("@richmondchambers.com") or hosted_domain == "richmondchambers.com":
             st.session_state["user_email"] = email
             return email
@@ -80,8 +74,6 @@ def google_login():
             st.error("Access is restricted to employees of Richmond Chambers.")
             st.stop()
 
-    # 3. If we get here, the user is not yet logged in.
-    # Show a "Sign in with Google" link that starts the OAuth flow.
     auth_url = (
         "https://accounts.google.com/o/oauth2/v2/auth"
         "?response_type=code"
@@ -97,8 +89,6 @@ def google_login():
         "Please sign in with a Richmond Chambers Google Workspace account to access this app."
     )
     st.markdown(f"[Sign in with Google]({auth_url})")
-
-    # Stop the app here until the user has logged in
     st.stop()
 
 
@@ -106,33 +96,19 @@ def google_login():
 # OpenAI key + login enforcement
 # ----------------------------
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-
-# 🔐 Enforce Google sign-in for @richmondchambers.com
 user_email = google_login()
-
-# (Optional debug)
-# st.write(f"Signed in as: {user_email}")
 
 
 # ----------------------------
 # Helpers
 # ----------------------------
 def format_for_email(response_text: str) -> str:
-    """
-    Cleans up the AI response so it's suitable for copying into an email.
-    Removes Markdown and extra spacing.
-    """
-    formatted = response_text.replace("**", "")  # remove bold markup
-    formatted = formatted.replace("\n\n", "\n")  # remove extra spacing
+    formatted = response_text.replace("**", "")
+    formatted = formatted.replace("\n\n", "\n")
     return formatted.strip()
 
 
 def extract_text_from_uploaded_file(uploaded_file) -> str:
-    """
-    Extract text content from an uploaded file.
-    Supports .txt directly; for PDF/DOCX you will need the relevant libraries
-    installed (PyPDF2 / python-docx).
-    """
     name = uploaded_file.name.lower()
 
     if name.endswith(".txt"):
@@ -141,7 +117,6 @@ def extract_text_from_uploaded_file(uploaded_file) -> str:
     if name.endswith(".pdf"):
         try:
             import PyPDF2
-
             reader = PyPDF2.PdfReader(uploaded_file)
             text = ""
             for page in reader.pages:
@@ -153,13 +128,11 @@ def extract_text_from_uploaded_file(uploaded_file) -> str:
     if name.endswith(".docx"):
         try:
             import docx
-
             doc = docx.Document(uploaded_file)
             return "\n".join(p.text for p in doc.paragraphs)
         except Exception:
             return ""
 
-    # Fallback – try to decode as text
     try:
         return uploaded_file.read().decode("utf-8", errors="ignore")
     except Exception:
@@ -177,12 +150,10 @@ def extract_pdf_text(uploaded_file) -> str:
 
 
 def first_name_only(name: str) -> str:
-    """Convert a full name like "John Smith" to "John". Leaves placeholders like "[Client]" untouched."""
     if not name:
         return "[Client]"
     name = name.strip()
 
-    # Don't touch placeholders
     if name.startswith("[") and name.endswith("]"):
         return name
 
@@ -191,43 +162,21 @@ def first_name_only(name: str) -> str:
 
 
 def extract_name_from_filename(filename: str) -> str:
-    """
-    Try to infer a client first name (or full name) from the transcript PDF filename.
-    Returns "[Client]" if nothing reliable is found.
-    """
     if not filename:
         return "[Client]"
 
-    # strip extension
     base = re.sub(r"\.[^.]+$", "", filename)
-
-    # replace separators with spaces
     base = re.sub(r"[_\-]+", " ", base)
 
-    # remove common noise words
     noise = [
-        "gemini",
-        "transcript",
-        "summary",
-        "consultation",
-        "call",
-        "meeting",
-        "recording",
-        "notes",
-        "full",
-        "final",
-        "post con",
-        "post-con",
-        "richmond",
-        "chambers",
+        "gemini", "transcript", "summary", "consultation", "call", "meeting",
+        "recording", "notes", "full", "final", "post con", "post-con",
+        "richmond", "chambers",
     ]
     pattern = r"\b(" + "|".join(map(re.escape, noise)) + r")\b"
     cleaned = re.sub(pattern, " ", base, flags=re.IGNORECASE)
-
-    # collapse whitespace
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
 
-    # Look for 1–3 capitalised words in a row (likely a name)
     m = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b", cleaned)
     if m:
         return first_name_only(m.group(1).strip())
@@ -285,11 +234,10 @@ def call_llm(prompt: str, model: str = "gpt-5.1", temperature: float = 0.2) -> s
 # ----------------------------
 # Load FAISS Index and Metadata
 # ----------------------------
-@st.cache_resource(ttl=86400)  # ✅ NEW: daily Drive check/rebuild
+@st.cache_resource(ttl=86400)
 def load_index_and_metadata():
     """
-    Ensure FAISS index is up to date (daily TTL), then load index and metadata.
-    Timestamp is read outside cache for live UI.
+    Daily Drive sync (TTL=1 day), then load index + metadata.
     """
     did_rebuild = sync_drive_and_rebuild_index_if_needed()
 
@@ -301,10 +249,6 @@ def load_index_and_metadata():
 
 
 def load_last_rebuilt_timestamp() -> str:
-    """
-    Read last rebuilt time from STATE_FILE (not cached).
-    This avoids Streamlit cache freezing the banner.
-    """
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
@@ -318,9 +262,38 @@ def load_last_rebuilt_timestamp() -> str:
 index, metadata, did_rebuild = load_index_and_metadata()
 last_rebuilt = load_last_rebuilt_timestamp()
 
-# ✅ Optional toast so you know the daily rebuild happened
 if did_rebuild:
     st.toast("Immigration law knowledge refreshed from Drive.")
+
+
+# ✅ NEW: Manual rebuild button (bypasses TTL)
+col_a, col_b = st.columns([1, 3])
+with col_a:
+    if st.button("Force rebuild now"):
+        with st.spinner("Forcing Drive sync + rebuild..."):
+            forced = sync_drive_and_rebuild_index_if_needed()
+        st.cache_resource.clear()
+        st.success("Rebuild complete. Please refresh the page.")
+with col_b:
+    st.caption("Use this if you’ve added new knowledge and want an immediate refresh.")
+
+
+# ✅ NEW: Debug expander to confirm Drive visibility
+with st.expander("Debug: Drive knowledge status", expanded=False):
+    st.write("STATE_FILE path:", STATE_FILE)
+    st.write("STATE_FILE exists?:", os.path.exists(STATE_FILE))
+
+    try:
+        files_dbg = list_drive_files()
+        st.write("Drive files visible to service account:", len(files_dbg))
+        if len(files_dbg) == 0:
+            st.warning(
+                "0 files found. On Streamlit Cloud this usually means the folder is "
+                "on a Shared Drive and list calls need supportsAllDrives/includeItemsFromAllDrives "
+                "or the service account lacks access."
+            )
+    except Exception as e:
+        st.error(f"Drive listing error: {e}")
 
 
 def search_index(query: str, k: int = 5):
@@ -469,226 +442,4 @@ Draft summary:
 """.strip()
 
 
-def build_verification_prompt(
-    final_summary: str, claims_json: str, sources_text: str
-) -> str:
-    return f"""
-You are verifying legal accuracy of a post-consultation summary against internal Richmond Chambers knowledge.
-
-Rules:
-- Use internal sources as authoritative.
-- If a claim is not clearly supported, flag it.
-- Do not invent new law.
-
-Draft summary:
-\"\"\"{final_summary}\"\"\"
-
-Extracted claims:
-\"\"\"{claims_json}\"\"\"
-
-Internal sources:
-\"\"\"{sources_text}\"\"\"
-
-For each claim, return:
-- claim
-- supported_status: Supported / Partially supported / Not supported
-- explanation (brief, neutral)
-- what to revise (if needed)
-
-Return in clear numbered prose (not JSON).
-""".strip()
-
-
-# ----------------------------
-# Streamlit app UI
-# ----------------------------
-st.markdown(
-    """
-<div style="text-align: center; padding-bottom: 10px;">
-  <img src="https://raw.githubusercontent.com/Richmondchambers/richmond-immigration-assistant/main/assets/logo.png" width="150">
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    "<h1 style='text-align: center; font-size: 2.6rem;'>Post-Con Email Generator</h1>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    f"<p style='color: grey; text-align: center; font-size: 0.9rem;'>"
-    f"Immigration law knowledge last rebuilt from Drive on: <b>{last_rebuilt}</b></p>",
-    unsafe_allow_html=True,
-)
-
-st.markdown("Upload the full Gemini transcript PDF and the Gemini summary PDF.")
-
-full_pdf = st.file_uploader("Full Gemini transcript (PDF)", type=["pdf"])
-summary_pdf = st.file_uploader("Gemini summary (PDF)", type=["pdf"])
-
-additional_instructions = st.text_area(
-    "Additional instructions (optional)",
-    height=150,
-)
-
-do_faiss_check = st.checkbox(
-    "Run legal accuracy check against internal knowledge (optional)"
-)
-
-generate = st.button("Generate Post-Con Email")
-
-if generate:
-    if not full_pdf or not summary_pdf:
-        st.error("Please upload BOTH the full transcript PDF and the Gemini summary PDF.")
-        st.stop()
-
-    # 1) Extract text from PDFs
-    full_text = extract_pdf_text(full_pdf)
-    summary_text = extract_pdf_text(summary_pdf)
-    transcript = clean_transcript(full_text)
-
-    # 0) Try filename first
-    client_name = extract_name_from_filename(full_pdf.name)
-
-    # 1) If filename didn't yield anything, try transcript
-    if client_name == "[Client]":
-        client_name = extract_prospect_name(transcript)
-
-    # 2) If still not found, try summary
-    if client_name == "[Client]":
-        client_name = extract_prospect_name(summary_text)
-
-    # Final fallback safety
-    if not client_name:
-        client_name = "[Client]"
-
-    # 2) Stage A: chunk notes from full transcript
-    with st.spinner("Reviewing transcript and drafting post-con email..."):
-        chunk_notes = []
-        for chunk in chunk_text(transcript):
-            chunk_notes.append(call_llm(build_chunk_prompt(chunk), temperature=0.1))
-
-        combined_notes = "\n\n".join(chunk_notes)
-
-        # 3) Stage B: final standardized post-con email summary
-        final_prompt = build_final_prompt(
-            combined_notes,
-            summary_text,
-            additional_instructions,
-            client_name=client_name,
-        )
-        final_summary = call_llm(final_prompt, temperature=0.2)
-
-    # Safety net: prepend salutation if model didn't
-    if not final_summary.lstrip().lower().startswith("dear "):
-        final_summary = f"Dear {client_name},\n\n{final_summary.lstrip()}"
-
-    st.success("Post-con email generated.")
-    st.text_area("Email-ready summary", value=final_summary, height=650)
-
-    # 4) OPTIONAL: FAISS legal accuracy check
-    if do_faiss_check:
-        with st.spinner("Running legal accuracy check..."):
-            claims_prompt = build_claim_extraction_prompt(final_summary)
-            claims_text = call_llm(claims_prompt, temperature=0.0)
-
-            try:
-                claims = json.loads(claims_text)
-            except Exception:
-                claims = []
-
-            retrieved_sources = []
-            for c in claims:
-                q = c.get("claim") or c.get("topic")
-                if not q:
-                    continue
-                retrieved_sources.extend(search_index(q, k=3))
-
-            unique_sources = []
-            seen = set()
-            for s in retrieved_sources:
-                content = s.get("content", "")
-                if content and content not in seen:
-                    unique_sources.append(s)
-                    seen.add(content)
-
-            # NOTE: no horizontal rule separators to avoid GDocs HR artifacts
-            sources_text = "\n\n".join(
-                f"[{s.get('source','internal')}]\n{s.get('content','')}"
-                for s in unique_sources
-            )
-
-            verification_prompt = build_verification_prompt(
-                final_summary, claims_text, sources_text
-            )
-            verification_report = call_llm(verification_prompt, temperature=0.0)
-
-        with st.expander("Legal accuracy check (internal use only)", expanded=False):
-            st.markdown(verification_report)
-
-    # --- ALWAYS show responsibility statement ---
-    st.markdown(
-        """
-**Professional Responsibility Statement**
-
-AI-generated content must not be relied upon without human review. Where such content is used,
-the barrister is responsible for verifying and ensuring the accuracy and legal soundness of that content.
-AI tools are used solely to support drafting and research; they do not replace the barrister’s independent
-judgment, analysis, or duty of care.
-""",
-        unsafe_allow_html=False,
-    )
-
-    # --- Copy to clipboard button (uses final_summary) ---
-    md = MarkdownIt()
-    html_reply = md.render(final_summary)
-
-    # Escape for safe JS embedding
-    html_js = json.dumps(html_reply)
-    text_js = json.dumps(final_summary)
-
-    components.html(
-        f"""
-<style>
-.copy-button {{
-  margin-top: 10px;
-  padding: 8px 16px;
-  background-color: #2e2e2e;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.2s ease, transform 0.1s ease;
-}}
-.copy-button:hover {{
-  background-color: #4a4a4a;
-}}
-.copy-button:active {{
-  background-color: #3a3a3a;
-  transform: scale(0.98);
-}}
-</style>
-
-<button class="copy-button" onclick="copyToClipboard()">📋 Copy to Clipboard</button>
-
-<script>
-async function copyToClipboard() {{
-  const htmlContent = {html_js};
-  const plainText = {text_js};
-
-  const blobHtml = new Blob([htmlContent], {{ type: 'text/html' }});
-  const blobText = new Blob([plainText], {{ type: 'text/plain' }});
-
-  const clipboardItem = new ClipboardItem({{
-    'text/html': blobHtml,
-    'text/plain': blobText
-  }});
-
-  await navigator.clipboard.write([clipboardItem]);
-  alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
-}}
-</script>
-""",
-        height=120,
-        scrolling=False,
-    )
+def build_verification_pro
