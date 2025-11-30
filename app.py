@@ -16,7 +16,7 @@ from index_builder import (
     INDEX_FILE,
     METADATA_FILE,
     STATE_FILE,
-    list_drive_files,  # ✅ NEW: for debug visibility
+    list_drive_files,  # ✅ for debug visibility
 )
 
 
@@ -266,19 +266,19 @@ if did_rebuild:
     st.toast("Immigration law knowledge refreshed from Drive.")
 
 
-# ✅ NEW: Manual rebuild button (bypasses TTL)
+# ✅ Manual rebuild button (bypasses TTL)
 col_a, col_b = st.columns([1, 3])
 with col_a:
     if st.button("Force rebuild now"):
         with st.spinner("Forcing Drive sync + rebuild..."):
-            forced = sync_drive_and_rebuild_index_if_needed()
+            _ = sync_drive_and_rebuild_index_if_needed()
         st.cache_resource.clear()
         st.success("Rebuild complete. Please refresh the page.")
 with col_b:
     st.caption("Use this if you’ve added new knowledge and want an immediate refresh.")
 
 
-# ✅ NEW: Debug expander to confirm Drive visibility
+# ✅ Debug expander to confirm Drive visibility
 with st.expander("Debug: Drive knowledge status", expanded=False):
     st.write("STATE_FILE path:", STATE_FILE)
     st.write("STATE_FILE exists?:", os.path.exists(STATE_FILE))
@@ -442,4 +442,218 @@ Draft summary:
 """.strip()
 
 
-def build_verification_pro
+def build_verification_prompt(
+    final_summary: str, claims_json: str, sources_text: str
+) -> str:
+    return f"""
+You are verifying legal accuracy of a post-consultation summary against internal Richmond Chambers knowledge.
+
+Rules:
+- Use internal sources as authoritative.
+- If a claim is not clearly supported, flag it.
+- Do not invent new law.
+
+Draft summary:
+\"\"\"{final_summary}\"\"\"
+
+Extracted claims:
+\"\"\"{claims_json}\"\"\"
+
+Internal sources:
+\"\"\"{sources_text}\"\"\"
+
+For each claim, return:
+- claim
+- supported_status: Supported / Partially supported / Not supported
+- explanation (brief, neutral)
+- what to revise (if needed)
+
+Return in clear numbered prose (not JSON).
+""".strip()
+
+
+# ----------------------------
+# Streamlit app UI
+# ----------------------------
+st.markdown(
+    """
+<div style="text-align: center; padding-bottom: 10px;">
+  <img src="https://raw.githubusercontent.com/RichmondChambers/richmond-immigration-assistant/main/assets/logo.png" width="150">
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    "<h1 style='text-align: center; font-size: 2.6rem;'>Post-Con Email Generator</h1>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f"<p style='color: grey; text-align: center; font-size: 0.9rem;'>"
+    f"Immigration law knowledge last rebuilt from Drive on: <b>{last_rebuilt}</b></p>",
+    unsafe_allow_html=True,
+)
+
+st.markdown("Upload the full Gemini transcript PDF and the Gemini summary PDF.")
+
+full_pdf = st.file_uploader("Full Gemini transcript (PDF)", type=["pdf"])
+summary_pdf = st.file_uploader("Gemini summary (PDF)", type=["pdf"])
+
+additional_instructions = st.text_area(
+    "Additional instructions (optional)",
+    height=150,
+)
+
+do_faiss_check = st.checkbox(
+    "Run legal accuracy check against internal knowledge (optional)"
+)
+
+generate = st.button("Generate Post-Con Email")
+
+if generate:
+    if not full_pdf or not summary_pdf:
+        st.error("Please upload BOTH the full transcript PDF and the Gemini summary PDF.")
+        st.stop()
+
+    # Extract text from PDFs
+    full_text = extract_pdf_text(full_pdf)
+    summary_text = extract_pdf_text(summary_pdf)
+    transcript = clean_transcript(full_text)
+
+    # Infer client name
+    client_name = extract_name_from_filename(full_pdf.name)
+    if client_name == "[Client]":
+        client_name = extract_prospect_name(transcript)
+    if client_name == "[Client]":
+        client_name = extract_prospect_name(summary_text)
+    if not client_name:
+        client_name = "[Client]"
+
+    # Stage A: chunk notes
+    with st.spinner("Reviewing transcript and drafting post-con email..."):
+        chunk_notes = []
+        for chunk in chunk_text(transcript):
+            chunk_notes.append(call_llm(build_chunk_prompt(chunk), temperature=0.1))
+
+        combined_notes = "\n\n".join(chunk_notes)
+
+        # Stage B: final email
+        final_prompt = build_final_prompt(
+            combined_notes,
+            summary_text,
+            additional_instructions,
+            client_name=client_name,
+        )
+        final_summary = call_llm(final_prompt, temperature=0.2)
+
+    # Safety net: prepend salutation if model didn't
+    if not final_summary.lstrip().lower().startswith("dear "):
+        final_summary = f"Dear {client_name},\n\n{final_summary.lstrip()}"
+
+    st.success("Post-con email generated.")
+    st.text_area("Email-ready summary", value=final_summary, height=650)
+
+    # OPTIONAL: FAISS legal accuracy check
+    if do_faiss_check:
+        with st.spinner("Running legal accuracy check..."):
+            claims_prompt = build_claim_extraction_prompt(final_summary)
+            claims_text = call_llm(claims_prompt, temperature=0.0)
+
+            try:
+                claims = json.loads(claims_text)
+            except Exception:
+                claims = []
+
+            retrieved_sources = []
+            for c in claims:
+                q = c.get("claim") or c.get("topic")
+                if not q:
+                    continue
+                retrieved_sources.extend(search_index(q, k=3))
+
+            unique_sources = []
+            seen = set()
+            for s in retrieved_sources:
+                content = s.get("content", "")
+                if content and content not in seen:
+                    unique_sources.append(s)
+                    seen.add(content)
+
+            sources_text = "\n\n".join(
+                f"[{s.get('source','internal')}]\n{s.get('content','')}"
+                for s in unique_sources
+            )
+
+            verification_prompt = build_verification_prompt(
+                final_summary, claims_text, sources_text
+            )
+            verification_report = call_llm(verification_prompt, temperature=0.0)
+
+        with st.expander("Legal accuracy check (internal use only)", expanded=False):
+            st.markdown(verification_report)
+
+    # Professional responsibility statement
+    st.markdown(
+        """
+**Professional Responsibility Statement**
+
+AI-generated content must not be relied upon without human review. Where such content is used,
+the barrister is responsible for verifying and ensuring the accuracy and legal soundness of that content.
+AI tools are used solely to support drafting and research; they do not replace the barrister’s independent
+judgment, analysis, or duty of care.
+""",
+        unsafe_allow_html=False,
+    )
+
+    # Copy-to-clipboard button
+    md = MarkdownIt()
+    html_reply = md.render(final_summary)
+
+    html_js = json.dumps(html_reply)
+    text_js = json.dumps(final_summary)
+
+    components.html(
+        f"""
+<style>
+.copy-button {{
+  margin-top: 10px;
+  padding: 8px 16px;
+  background-color: #2e2e2e;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}}
+.copy-button:hover {{
+  background-color: #4a4a4a;
+}}
+.copy-button:active {{
+  background-color: #3a3a3a;
+  transform: scale(0.98);
+}}
+</style>
+
+<button class="copy-button" onclick="copyToClipboard()">📋 Copy to Clipboard</button>
+
+<script>
+async function copyToClipboard() {{
+  const htmlContent = {html_js};
+  const plainText = {text_js};
+
+  const blobHtml = new Blob([htmlContent], {{ type: 'text/html' }});
+  const blobText = new Blob([plainText], {{ type: 'text/plain' }});
+
+  const clipboardItem = new ClipboardItem({{
+    'text/html': blobHtml,
+    'text/plain': blobText
+  }});
+
+  await navigator.clipboard.write([clipboardItem]);
+  alert("Formatted text copied! Paste into Gmail or Google Docs to retain formatting.");
+}}
+</script>
+""",
+        height=120,
+        scrolling=False,
+    )
