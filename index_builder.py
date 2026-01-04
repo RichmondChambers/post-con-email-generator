@@ -4,7 +4,8 @@ import json
 import pickle
 import time
 import datetime
-from typing import List, Dict
+from zoneinfo import ZoneInfo
+from typing import List, Dict, Optional
 
 import numpy as np
 import faiss
@@ -30,6 +31,14 @@ DRIVE_FOLDER_ID = "13J-DiERhtS1VWgF2GtZ1wnMfbUzkq6-G"
 INDEX_FILE = os.path.join(BASE_DIR, "faiss_index.index")
 METADATA_FILE = os.path.join(BASE_DIR, "metadata.pkl")
 STATE_FILE = os.path.join(BASE_DIR, "drive_index_state.json")  # detect changes + timestamp
+
+# 🔹 Drive sync behavior
+OVERNIGHT_WINDOW_START = int(os.getenv("DRIVE_SYNC_WINDOW_START_HOUR", "1"))  # 01:00 UK
+OVERNIGHT_WINDOW_END = int(os.getenv("DRIVE_SYNC_WINDOW_END_HOUR", "6"))    # 06:00 UK
+COOLDOWN_HOURS = int(os.getenv("DRIVE_REBUILD_COOLDOWN_HOURS", "20"))
+ALLOW_DAYTIME_DRIVE_CHECKS = (
+    os.getenv("ENABLE_DAYTIME_DRIVE_CHECKS", "false").lower() == "true"
+)
 
 
 def get_drive_service():
@@ -110,6 +119,32 @@ def have_files_changed(current_files, previous_state):
     if current_state != previous_state.get("files", {}):
         return True, current_state
     return False, current_state
+
+
+def _now_london(now_utc: Optional[datetime.datetime] = None) -> datetime.datetime:
+    if now_utc is None:
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+    return now_utc.astimezone(ZoneInfo("Europe/London"))
+
+
+def _within_overnight_window(now_london: datetime.datetime) -> bool:
+    start = datetime.time(hour=OVERNIGHT_WINDOW_START)
+    end = datetime.time(hour=OVERNIGHT_WINDOW_END)
+    if start <= end:
+        return start <= now_london.time() < end
+    # window wraps midnight
+    return now_london.time() >= start or now_london.time() < end
+
+
+def _parse_last_rebuilt(last_rebuilt: str) -> Optional[datetime.datetime]:
+    if not last_rebuilt:
+        return None
+    if last_rebuilt.endswith("Z"):
+        last_rebuilt = last_rebuilt[:-1]
+    try:
+        return datetime.datetime.fromisoformat(last_rebuilt).replace(tzinfo=datetime.timezone.utc)
+    except Exception:
+        return None
 
 
 def download_file_bytes(service, file):
@@ -276,22 +311,53 @@ def rebuild_index_from_drive(files: List[Dict]):
         pickle.dump(metadata, f)
 
 
-def sync_drive_and_rebuild_index_if_needed():
+def sync_drive_and_rebuild_index_if_needed(
+    bypass_cooldown: bool = False,
+    allow_daytime_checks: Optional[bool] = None,
+    now_utc: Optional[datetime.datetime] = None,
+):
     """
-    Check Drive for new/updated files; if changes are detected,
-    rebuild FAISS index and metadata from scratch.
+    Check Drive for new/updated files; if changes are detected, rebuild FAISS index
+    and metadata from scratch.
+
+    Cooldown + overnight window behaviour:
+    - The app only checks Drive during the UK overnight window by default so daytime
+      users skip the expensive Drive sync.
+    - A daily cooldown (configurable) prevents repeated Drive scans unless
+      `bypass_cooldown` is True (used by the nightly job).
+    - If local artifacts are missing, rebuild immediately regardless of cooldown
+      or window.
     """
-    files = list_drive_files()
+
+    allow_daytime = ALLOW_DAYTIME_DRIVE_CHECKS if allow_daytime_checks is None else allow_daytime_checks
+    now_london = _now_london(now_utc)
     previous_state = load_previous_state()
+    last_rebuilt = _parse_last_rebuilt(previous_state.get("last_rebuilt", ""))
+
+    local_missing = not os.path.exists(INDEX_FILE) or not os.path.exists(METADATA_FILE)
+    if local_missing:
+        files = list_drive_files()
+        rebuild_index_from_drive(files)
+        save_state(
+            {
+                "files": {f["id"]: f["modifiedTime"] for f in files},
+                "last_rebuilt": datetime.datetime.utcnow().isoformat() + "Z",
+            }
+        )
+        return True
+
+    if not allow_daytime and not _within_overnight_window(now_london):
+        return False
+
+    if not bypass_cooldown and last_rebuilt:
+        elapsed = now_london - last_rebuilt.astimezone(ZoneInfo("Europe/London"))
+        if elapsed < datetime.timedelta(hours=COOLDOWN_HOURS):
+            return False
+
+    files = list_drive_files()
     changed, current_state = have_files_changed(files, previous_state)
 
-    needs_rebuild = (
-        changed
-        or not os.path.exists(INDEX_FILE)
-        or not os.path.exists(METADATA_FILE)
-    )
-
-    if needs_rebuild:
+    if changed:
         rebuild_index_from_drive(files)
         save_state(
             {
@@ -301,7 +367,7 @@ def sync_drive_and_rebuild_index_if_needed():
         )
         return True
 
-    # ✅ NEW: if state file doesn't exist yet, write one anyway so banner isn't stuck on Unknown
+    # ✅ If state file doesn't exist yet, write one anyway so banner isn't stuck on Unknown
     if not os.path.exists(STATE_FILE):
         save_state(
             {
