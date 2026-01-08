@@ -10,6 +10,8 @@ import jwt  # from PyJWT
 import streamlit.components.v1 as components
 from markdown_it import MarkdownIt
 import os
+import datetime
+from zoneinfo import ZoneInfo
 
 from index_builder import (
     sync_drive_and_rebuild_index_if_needed,
@@ -252,7 +254,16 @@ def load_last_rebuilt_timestamp() -> str:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
                 state = json.load(f)
-            return state.get("last_rebuilt", "Unknown")
+            last_rebuilt = state.get("last_rebuilt", "")
+            if not last_rebuilt:
+                return "Unknown"
+            if last_rebuilt.endswith("Z"):
+                last_rebuilt = last_rebuilt[:-1]
+            parsed = datetime.datetime.fromisoformat(last_rebuilt)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+            local_time = parsed.astimezone(ZoneInfo("Europe/London"))
+            return local_time.strftime("%Y-%m-%d %H:%M %Z")
         return "Unknown"
     except Exception:
         return "Unknown"
