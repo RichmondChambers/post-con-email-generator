@@ -250,23 +250,34 @@ def load_index_and_metadata():
 
 
 def load_last_rebuilt_timestamp() -> str:
+    def _format_local(dt: datetime.datetime) -> str:
+        local_time = dt.astimezone(ZoneInfo("Europe/London"))
+        return local_time.strftime("%Y-%m-%d %H:%M %Z")
+
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
                 state = json.load(f)
             last_rebuilt = state.get("last_rebuilt", "")
-            if not last_rebuilt:
-                return "Unknown"
-            if last_rebuilt.endswith("Z"):
-                last_rebuilt = last_rebuilt[:-1]
-            parsed = datetime.datetime.fromisoformat(last_rebuilt)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
-            local_time = parsed.astimezone(ZoneInfo("Europe/London"))
-            return local_time.strftime("%Y-%m-%d %H:%M %Z")
-        return "Unknown"
+            if last_rebuilt:
+                if last_rebuilt.endswith("Z"):
+                    last_rebuilt = last_rebuilt[:-1]
+                parsed = datetime.datetime.fromisoformat(last_rebuilt)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+                return _format_local(parsed)
     except Exception:
-        return "Unknown"
+        pass
+
+    try:
+        if os.path.exists(INDEX_FILE):
+            mtime = os.path.getmtime(INDEX_FILE)
+            parsed = datetime.datetime.fromtimestamp(mtime, tz=datetime.timezone.utc)
+            return _format_local(parsed)
+    except Exception:
+        pass
+
+    return "Unknown"
 
 
 # ---- IMPORTANT: restore these globals, but NO toast ----
