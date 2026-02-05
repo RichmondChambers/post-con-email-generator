@@ -29,12 +29,19 @@ def google_login():
     Require the user to sign in with a Google account and restrict access
     to @richmondchambers.com email addresses.
     """
+    def get_query_params():
+        if hasattr(st, "query_params"):
+            return st.query_params
+        return st.experimental_get_query_params()
+
     if "user_email" in st.session_state:
         return st.session_state["user_email"]
 
-    params = st.experimental_get_query_params()
+    params = get_query_params()
     if "code" in params:
-        code = params["code"][0]
+        code = params["code"]
+        if isinstance(code, list):
+            code = code[0]
 
         token_response = requests.post(
             "https://oauth2.googleapis.com/token",
