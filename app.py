@@ -348,6 +348,7 @@ Transcript chunk:
 def build_final_prompt(
     all_chunk_notes: str,
     gemini_summary: str,
+    uploaded_docs_context: str = "",
     additional_instructions: str = "",
     client_name: str = "[Client]",
 ) -> str:
@@ -367,6 +368,8 @@ Rules:
 - Do NOT add new routes beyond consultation.
 - If ambiguous, flag what’s missing.
 - If transcript conflicts with Gemini summary, follow transcript and note neutrally.
+- Use uploaded document context only if it is relevant to this specific draft.
+- Treat uploaded document context as ephemeral: do not describe it as a permanent knowledge base.
 - Use second person ("you", "your").
 - Your Instructions must be bullet points. Other sections prose.
 - Where a route was discussed in any detail, devote at least one substantial paragraph.
@@ -416,6 +419,9 @@ Prose. Invite confirmation. Admin team engagement letter. Warm sign-off.
 
 Additional instructions:
 \"\"\"{additional_instructions.strip()}\"\"\"
+
+Additional uploaded document context (ephemeral for this draft only):
+\"\"\"{uploaded_docs_context.strip()}\"\"\"
 
 Gemini summary (supportive only):
 \"\"\"{gemini_summary.strip()}\"\"\"
@@ -495,6 +501,11 @@ st.markdown("Upload the full Gemini transcript PDF and the Gemini summary PDF.")
 
 full_pdf = st.file_uploader("Full Gemini transcript (PDF)", type=["pdf"])
 summary_pdf = st.file_uploader("Gemini summary (PDF)", type=["pdf"])
+extra_docs = st.file_uploader(
+    "Additional context documents (optional, up to 3: PDF, DOCX, TXT)",
+    type=["pdf", "docx", "txt"],
+    accept_multiple_files=True,
+)
 
 additional_instructions = st.text_area(
     "Additional instructions (optional)",
@@ -511,11 +522,40 @@ if generate:
     if not full_pdf or not summary_pdf:
         st.error("Please upload BOTH the full transcript PDF and the Gemini summary PDF.")
         st.stop()
+    if extra_docs and len(extra_docs) > 3:
+        st.error("Please upload no more than 3 additional documents.")
+        st.stop()
 
     # Extract text from PDFs
     full_text = extract_pdf_text(full_pdf)
     summary_text = extract_pdf_text(summary_pdf)
     transcript = clean_transcript(full_text)
+    uploaded_docs_context = ""
+
+    # Additional upload context is one-time per upload set:
+    # included only once, then marked as consumed so it cannot be reused
+    # in later generations unless files are uploaded again.
+    extra_doc_records = []
+    if extra_docs:
+        if "consumed_extra_doc_ids" not in st.session_state:
+            st.session_state["consumed_extra_doc_ids"] = set()
+
+        for doc in extra_docs[:3]:
+            extracted_text = extract_text_from_uploaded_file(doc)
+            doc_id = f"{doc.name}:{doc.size}"
+            if extracted_text.strip() and doc_id not in st.session_state["consumed_extra_doc_ids"]:
+                normalized_text = re.sub(r"\s+", " ", extracted_text).strip()
+                clipped_text = normalized_text[:4000]
+                extra_doc_records.append(f"[{doc.name}]\n{clipped_text}")
+                st.session_state["consumed_extra_doc_ids"].add(doc_id)
+
+        if extra_doc_records:
+            uploaded_docs_context = "\n\n".join(extra_doc_records)
+        else:
+            st.info(
+                "No new additional document context was included. "
+                "To use documents again, re-upload them."
+            )
 
     # Infer client name
     client_name = extract_name_from_filename(full_pdf.name)
@@ -538,6 +578,7 @@ if generate:
         final_prompt = build_final_prompt(
             combined_notes,
             summary_text,
+            uploaded_docs_context,
             additional_instructions,
             client_name=client_name,
         )
